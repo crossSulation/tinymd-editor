@@ -1,0 +1,61 @@
+.app-editor {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.editor-page-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.back-button {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: #1976d2;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.back-button:hover {
+  text-decoration: underline;
+}
+
+/* Read-only -- title/author/tags are set once at creation (HomePage's
+   NewDocumentModal) and aren't editable from this page (see Claude.md). */
+.editor-page-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 0.95rem;
+}
+
+.editor-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-surface .milkdown {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}

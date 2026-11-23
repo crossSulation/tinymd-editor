@@ -1,0 +1,408 @@
+import { useEffect, useRef, useState } from "react";
+import type { Command, EditorState } from "prosemirror-state";
+import { NodeSelection } from "prosemirror-state";
+import type { EditorView } from "prosemirror-view";
+import type { Editor } from "@milkdown/kit/core";
+import { editorViewCtx, schemaCtx } from "@milkdown/kit/core";
+import { isMarkActive, isNodeActive, type EditorCommands } from "./commands";
+import { insertMermaidBlock } from "./mermaidPreview";
+import { useKeyboardInset } from "./useKeyboardInset";
+import { TEXT_COLORS, isTextColorActive } from "./textColor";
+
+// Best-guess group-panel height for the very first open, before any real
+// keyboard height has been observed on this device (e.g. the editor was
+// never focused yet) -- a typical phone keyboard's rough height in CSS px.
+const FALLBACK_PANEL_HEIGHT = 280;
+
+// Suppressed while focus is inside a code block's embedded CodeMirror
+// instance (see Editor.tsx's codeBlockComponent config) -- none of this
+// toolbar's markdown-formatting commands apply to code. CodeMirror's own DOM
+// lives inside the code-block NodeView's `.milkdown-code-block` wrapper
+// (confirmed against @milkdown/components' NodeView source) and is still a
+// descendant of view.dom regardless of which CodeMirror internals end up
+// focused, so a view.dom-scoped focusin/focusout listener reliably tracks it.
+function useToolbarSuppressed(view: EditorView): boolean {
+  const [suppressed, setSuppressed] = useState(false);
+
+  useEffect(() => {
+    const dom = view.dom;
+    const update = () => {
+      const active = document.activeElement;
+      setSuppressed(!!active && dom.contains(active) && !!active.closest(".milkdown-code-block"));
+    };
+    update();
+    dom.addEventListener("focusin", update);
+    dom.addEventListener("focusout", update);
+    return () => {
+      dom.removeEventListener("focusin", update);
+      dom.removeEventListener("focusout", update);
+    };
+  }, [view]);
+
+  return suppressed;
+}
+
+export interface ToolbarProps {
+  editor: Editor;
+  commands: EditorCommands;
+}
+
+interface ToolbarItem {
+  label: string;
+  title: string;
+  command: Command;
+  isActive?: (state: EditorState) => boolean;
+  /** Renders a colored swatch dot instead of `label` text -- same visual pattern as ModeHeader.tsx's pen-style swatches. */
+  swatchColor?: string;
+}
+
+interface ToolbarRow {
+  label: string;
+  items: ToolbarItem[];
+}
+
+interface ToolbarGroup {
+  key: string;
+  label: string;
+  title: string;
+  /** Items grouped into labeled rows -- each renders as its own row in the panel. */
+  rows: ToolbarRow[];
+}
+
+function ToolbarItemButton({
+  item,
+  state,
+  view,
+  onApplied,
+}: {
+  item: ToolbarItem;
+  state: EditorState;
+  view: EditorView;
+  onApplied: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="toolbar-button"
+      title={item.title}
+      aria-label={item.title}
+      data-active={item.isActive?.(state) || undefined}
+      disabled={!item.command(state)}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => {
+        item.command(view.state, view.dispatch);
+        onApplied();
+      }}
+    >
+      {item.swatchColor ? <span className="toolbar-swatch" style={{ background: item.swatchColor }} /> : item.label}
+    </button>
+  );
+}
+
+// Bottom toolbar: hidden whenever the keyboard is hidden, visible whenever
+// the keyboard is -- tied to the same keyboardInset signal that positions it
+// (see `visible` below), not to editor focus, since focus and the keyboard's
+// actual on-screen presence aren't the same thing (a hardware/Bluetooth
+// keyboard, or the brief moment before the on-screen keyboard's open
+// animation finishes, can both leave the editor focused with no keyboard
+// actually covering anything). Also hidden whenever focus is inside a code
+// block (see useToolbarSuppressed above) -- none of these commands apply to
+// code, regardless of whether the keyboard happens to be up for it.
+// Horizontally scrollable if it doesn't fit, 44px-minimum touch targets,
+// never :hover-revealed (see Claude.md for why). This is the primary way to
+// format text and insert blocks on touch, replacing Crepe's hover-revealed
+// drag handle and floating menus.
+//
+// Less-frequent items are bucketed into named groups (see `groups` below).
+// Tapping a group's trigger button blurs the editor -- dismissing the
+// on-screen keyboard -- and swaps the toolbar row for a grid panel of that
+// group's items, since the keyboard's screen space is exactly what the grid
+// needs. Picking an item (or closing the panel) returns focus to the editor,
+// which brings the keyboard back. The toolbar/panel stays visible for that
+// deliberate blur regardless of keyboardInset (see `visible` below) -- it's
+// only once no group is expanded that visibility goes back to tracking the
+// keyboard.
+export function Toolbar({ editor, commands }: ToolbarProps) {
+  const view = editor.ctx.get(editorViewCtx);
+  const schema = editor.ctx.get(schemaCtx);
+  const state = view.state;
+  const keyboardInset = useKeyboardInset();
+  const toolbarSuppressed = useToolbarSuppressed(view);
+  const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
+  const [panelHeight, setPanelHeight] = useState(FALLBACK_PANEL_HEIGHT);
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+
+  // Remember the last real keyboard height seen while it was actually open,
+  // since by the time a group panel needs a height, blur() has already
+  // started closing the keyboard and keyboardInset is on its way back to 0.
+  const lastKeyboardHeightRef = useRef(FALLBACK_PANEL_HEIGHT);
+  useEffect(() => {
+    if (keyboardInset > 0) lastKeyboardHeightRef.current = keyboardInset;
+  }, [keyboardInset]);
+
+  const insertMermaid: Command = (_state, dispatch) => {
+    if (dispatch) insertMermaidBlock(editor.ctx);
+    return true;
+  };
+
+  // Frequent, single-tap toggles -- kept directly on the toolbar row.
+  const defaultItems: ToolbarItem[] = [
+    { label: "B", title: "Bold", command: commands.toggleBold, isActive: (s) => isMarkActive(s, schema.marks.strong!) },
+    { label: "I", title: "Italic", command: commands.toggleItalic, isActive: (s) => isMarkActive(s, schema.marks.emphasis!) },
+    { label: "</>", title: "Inline code", command: commands.toggleInlineCode, isActive: (s) => isMarkActive(s, schema.marks.inlineCode!) },
+    { label: "S", title: "Strikethrough", command: commands.toggleStrikethrough, isActive: (s) => isMarkActive(s, schema.marks.strike_through!) },
+    { label: "U", title: "Underline", command: commands.toggleUnderline, isActive: (s) => isMarkActive(s, schema.marks.underline!) },
+    { label: "🔗", title: "Link", command: commands.toggleLink, isActive: (s) => isMarkActive(s, schema.marks.link!) },
+    { label: "↶", title: "Undo", command: commands.undo },
+    { label: "↷", title: "Redo", command: commands.redo },
+  ];
+
+  const groups: ToolbarGroup[] = [
+    {
+      key: "insert",
+      label: "+",
+      title: "Insert",
+      rows: [
+        {
+          label: "Media",
+          items: [
+            { label: "🖼", title: "Image", command: commands.insertImage },
+            { label: "▶", title: "Video", command: commands.insertVideo },
+            { label: "♪", title: "Audio", command: commands.insertAudio },
+          ],
+        },
+        {
+          label: "Code",
+          items: [
+            { label: "{ }", title: "Code block", command: commands.setCodeBlock, isActive: (s) => isNodeActive(s, schema.nodes.code_block!) },
+            { label: "◇", title: "Mermaid diagram", command: insertMermaid },
+          ],
+        },
+        {
+          label: "Structure",
+          items: [
+            { label: "▦", title: "Insert table", command: commands.insertTable(editor.ctx, 3, 3) },
+            { label: "—", title: "Horizontal rule", command: commands.insertHorizontalRule },
+          ],
+        },
+      ],
+    },
+    {
+      key: "table",
+      label: "▦+",
+      title: "Table",
+      rows: [
+        {
+          label: "Row",
+          items: [
+            { label: "↑Row", title: "Insert row above", command: commands.insertRowAbove },
+            { label: "↓Row", title: "Insert row below", command: commands.insertRowBelow },
+            { label: "✕Row", title: "Delete row", command: commands.deleteRow },
+          ],
+        },
+        {
+          label: "Column",
+          items: [
+            { label: "←Col", title: "Insert column left", command: commands.insertColumnLeft },
+            { label: "→Col", title: "Insert column right", command: commands.insertColumnRight },
+            { label: "✕Col", title: "Delete column", command: commands.deleteColumn },
+          ],
+        },
+        {
+          label: "Cells",
+          items: [
+            { label: "Merge→", title: "Combine with cell to the right", command: commands.combineRight },
+            { label: "Merge↓", title: "Combine with cell below", command: commands.combineDown },
+            { label: "Split", title: "Split cell", command: commands.splitCell },
+          ],
+        },
+      ],
+    },
+    {
+      key: "text",
+      label: "T",
+      title: "Text styles",
+      rows: [
+        {
+          label: "Headings",
+          items: [
+            { label: "¶", title: "Paragraph", command: commands.setParagraph, isActive: (s) => isNodeActive(s, schema.nodes.paragraph!) },
+            { label: "H1", title: "Heading 1", command: commands.setHeading(1), isActive: (s) => isNodeActive(s, schema.nodes.heading!, { level: 1 }) },
+            { label: "H2", title: "Heading 2", command: commands.setHeading(2), isActive: (s) => isNodeActive(s, schema.nodes.heading!, { level: 2 }) },
+            { label: "H3", title: "Heading 3", command: commands.setHeading(3), isActive: (s) => isNodeActive(s, schema.nodes.heading!, { level: 3 }) },
+            { label: "H4", title: "Heading 4", command: commands.setHeading(4), isActive: (s) => isNodeActive(s, schema.nodes.heading!, { level: 4 }) },
+            { label: "H5", title: "Heading 5", command: commands.setHeading(5), isActive: (s) => isNodeActive(s, schema.nodes.heading!, { level: 5 }) },
+          ],
+        },
+        {
+          label: "Lists",
+          items: [
+            { label: "“”", title: "Blockquote", command: commands.toggleBlockquote, isActive: (s) => isNodeActive(s, schema.nodes.blockquote!) },
+            { label: "•", title: "Bullet list", command: commands.toggleBulletList, isActive: (s) => isNodeActive(s, schema.nodes.bullet_list!) },
+            { label: "1.", title: "Ordered list", command: commands.toggleOrderedList, isActive: (s) => isNodeActive(s, schema.nodes.ordered_list!) },
+          ],
+        },
+      ],
+    },
+    {
+      key: "color",
+      label: "🎨",
+      title: "Text color",
+      rows: [
+        {
+          label: "Color",
+          items: [
+            ...TEXT_COLORS.map((option) => ({
+              label: option.label,
+              title: option.label,
+              command: commands.setTextColor(option.color),
+              isActive: (s: EditorState) => isTextColorActive(s, schema.marks.text_color!, option.color),
+              swatchColor: option.color,
+            })),
+            { label: "✕", title: "Clear color", command: commands.clearTextColor },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const activeGroup = groups.find((group) => group.key === activeGroupKey) ?? null;
+
+  // Tapping an image/video/audio node (selectable: true on all three)
+  // creates a NodeSelection without focusing any text or bringing up the
+  // keyboard -- so unlike every other toolbar state, this has to be its own
+  // extra `visible` condition, not just riding on keyboardInset > 0. Takes
+  // priority over the default row but not over an explicitly opened group
+  // panel (selecting media while a panel happens to be open is not a normal
+  // flow, but if it occurs, the panel the user deliberately opened wins).
+  const mediaSelection = state.selection instanceof NodeSelection ? state.selection : null;
+  const selectedMediaType =
+    mediaSelection && [schema.nodes.image, schema.nodes.video, schema.nodes.audio].includes(mediaSelection.node.type)
+      ? mediaSelection.node.type
+      : null;
+
+  const visible = !toolbarSuppressed && (keyboardInset > 0 || activeGroup !== null || selectedMediaType !== null);
+
+  function openGroup(key: string) {
+    setPanelHeight(keyboardInset > 0 ? keyboardInset : lastKeyboardHeightRef.current);
+    view.dom.blur();
+    setActiveGroupKey(key);
+  }
+
+  function closeGroup() {
+    setActiveGroupKey(null);
+    view.focus();
+  }
+
+  function deleteSelectedMedia() {
+    view.dispatch(view.state.tr.deleteSelection());
+  }
+
+  if (!visible) return null;
+
+  return (
+    <div className="toolbar" role="toolbar" style={{ bottom: keyboardInset }}>
+      {activeGroup ? (
+        <div className="toolbar-group-panel" style={{ height: panelHeight }}>
+          <div className="toolbar-group-panel-header">
+            <span>{activeGroup.title}</span>
+            <button type="button" className="toolbar-group-close" aria-label="Close" onClick={closeGroup}>
+              ✕
+            </button>
+          </div>
+          <div className="toolbar-group-rows">
+            {activeGroup.rows.map((row) => (
+              <div className="toolbar-group-row" key={row.label}>
+                <span className="toolbar-group-row-label">{row.label}</span>
+                <div className="toolbar-group-row-items">
+                  {row.items.map((item) => (
+                    <ToolbarItemButton key={item.title} item={item} state={state} view={view} onApplied={closeGroup} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : selectedMediaType ? (
+        // Contextual bar for a selected image/video/audio node (see
+        // mediaSelection above) -- not one of the icon-grid groups above,
+        // since it's driven by selection state rather than an explicit
+        // tap-to-open trigger, and Preview isn't a document-mutating
+        // ProseMirror command the way every other toolbar action is (it
+        // just opens the lightbox overlay below), so it doesn't fit
+        // ToolbarItem/ToolbarItemButton's command-based model either.
+        <div className="toolbar-row toolbar-media-row">
+          {selectedMediaType === schema.nodes.image && (
+            <button
+              type="button"
+              className="toolbar-button"
+              title="Preview image"
+              aria-label="Preview image"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setPreviewSrc(mediaSelection!.node.attrs.src)}
+            >
+              👁
+            </button>
+          )}
+          <button
+            type="button"
+            className="toolbar-button"
+            title="Delete"
+            aria-label="Delete"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={deleteSelectedMedia}
+          >
+            🗑
+          </button>
+        </div>
+      ) : (
+        <div className="toolbar-row">
+          <div className="toolbar-scroll">
+            {groups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                className="toolbar-button toolbar-group-trigger"
+                title={group.title}
+                aria-label={group.title}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => openGroup(group.key)}
+              >
+                {group.label}
+              </button>
+            ))}
+            {defaultItems.map((item) => (
+              <ToolbarItemButton key={item.title} item={item} state={state} view={view} onApplied={() => view.focus()} />
+            ))}
+          </div>
+          {/* Pinned outside the scrollable row (not just appended to it) so
+              it's always reachable without scrolling -- some on-screen
+              keyboards have no dismiss/close key of their own. */}
+          <button
+            type="button"
+            className="toolbar-button toolbar-dismiss-keyboard"
+            title="Hide keyboard"
+            aria-label="Hide keyboard"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => view.dom.blur()}
+          >
+            ⌨
+          </button>
+        </div>
+      )}
+      {previewSrc && (
+        <div className="media-preview-overlay" onClick={() => setPreviewSrc(null)}>
+          <img src={previewSrc} alt="" className="media-preview-image" />
+          <button
+            type="button"
+            className="media-preview-close"
+            aria-label="Close preview"
+            onClick={() => setPreviewSrc(null)}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,82 @@
+/* Top-of-editor icon toolbar (mode switch + pen style, in draw mode -- see
+   ModeHeader.tsx). Stays in place simply by being outside the scrollable
+   content area. Icon-only, not tab-styled: no underline, no text labels --
+   same design language as the bottom Toolbar's own icon buttons. */
+.mode-header {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.mode-header-button {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid rgba(0, 0, 0, 0.23);
+  border-radius: 4px;
+  background: #fff;
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+/* :active (press feedback), not :hover -- touch has no hover state. */
+.mode-header-button:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Driven by data-active (mode === this button's mode), not :hover. */
+.mode-header-button[data-active="true"] {
+  background: rgba(25, 118, 210, 0.12);
+  border-color: #1976d2;
+  color: #1976d2;
+}
+
+/* The Draw button's brief disabled window while the single-instance editor
+   is still initializing -- see ModeHeader.tsx's drawDisabled prop. */
+.mode-header-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.mode-header-button:disabled:active {
+  background: #fff;
+}
+
+.mode-header-separator {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.25rem 0.1rem;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.mode-header-pen-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mode-header-pen-button:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.mode-header-pen-button[data-active="true"] {
+  border-color: #1976d2;
+}
+
+.mode-header-pen-swatch {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}

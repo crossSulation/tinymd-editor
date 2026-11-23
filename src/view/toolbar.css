@@ -1,0 +1,193 @@
+/* Fixed bottom toolbar: always visible (never summoned, never hover-gated --
+   see editor-base.css). Holds either the default item row or a group's grid
+   panel (see Toolbar.tsx) -- never both at once. */
+.toolbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  background: #fff;
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+/* Default item row: the scrollable region (formatting/insert items) plus a
+   pinned "hide keyboard" button that's never part of the scroll, so it's
+   always reachable regardless of how many items overflow. */
+.toolbar-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+  padding: 0.5rem;
+}
+
+.toolbar-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0.25rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.toolbar-dismiss-keyboard {
+  flex: none;
+}
+
+/* A group's expanded panel (see Toolbar.tsx's openGroup/closeGroup): replaces
+   .toolbar-row while open. Its height is set inline (see Toolbar.tsx's
+   panelHeight) to match the keyboard's own height, so opening/closing a
+   group doesn't change the editor's visible height at all -- the panel just
+   occupies the space the keyboard was already using. */
+.toolbar-group-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem;
+  box-sizing: border-box;
+}
+
+.toolbar-group-panel-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.25rem 0.25rem 0.5rem;
+  font-weight: 600;
+}
+
+.toolbar-group-close {
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.toolbar-group-close:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Explicit, labeled rows (see Toolbar.tsx's ToolbarGroup.rows) rather than
+   one flat auto-wrapping grid -- related items (e.g. Image/Video/Audio) stay
+   together on their own named row regardless of how many items are in the
+   group. */
+.toolbar-group-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.toolbar-group-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.toolbar-group-row-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.toolbar-group-row-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.toolbar-group-trigger {
+  font-weight: 600;
+}
+
+.toolbar-button {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid rgba(0, 0, 0, 0.23);
+  border-radius: 4px;
+  background: #fff;
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+/* :active (press feedback), not :hover -- touch has no hover state. */
+.toolbar-button:active:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.toolbar-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Color-swatch buttons (the "Color" group's palette -- see Toolbar.tsx's
+   swatchColor), same visual pattern as ModeHeader.tsx's pen-style swatches. */
+.toolbar-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+/* Driven by selection-state polling (see Toolbar.tsx's isActive checks), not
+   :hover -- shows when the cursor/selection is already inside that mark/node. */
+.toolbar-button[data-active="true"] {
+  background: rgba(25, 118, 210, 0.12);
+  border-color: #1976d2;
+  color: #1976d2;
+}
+
+/* Contextual bar shown when an image/video/audio node is selected (see
+   Toolbar.tsx's selectedMediaType) -- replaces .toolbar-row, not appended to
+   it, same as a group panel does; just not inside .toolbar-group-panel since
+   it's driven by selection state, not an explicit open/close toggle. */
+.toolbar-media-row {
+  justify-content: center;
+}
+
+/* Full-screen image preview (Toolbar.tsx's previewSrc) -- tapping the
+   backdrop or the close button both dismiss it. position: fixed here works
+   the same as .toolbar's own despite being nested deep in Editor's tree
+   (fixed positioning is relative to the viewport, not the parent, as long
+   as no ancestor establishes its own containing block -- none here do). */
+.media-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.media-preview-image {
+  max-width: 92vw;
+  max-height: 85vh;
+  object-fit: contain;
+}
+
+.media-preview-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  min-width: 44px;
+  min-height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.media-preview-close:active {
+  background: rgba(255, 255, 255, 0.3);
+}

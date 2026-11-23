@@ -1,0 +1,11 @@
+.storage-warning {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.6rem 1rem;
+  background: #fff3cd;
+  color: #664d03;
+  border-bottom: 1px solid #ffe69c;
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  font-size: 0.85rem;
+  text-align: center;
+}

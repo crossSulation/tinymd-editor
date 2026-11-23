@@ -1,0 +1,242 @@
+/* Base editor chrome. Design rule for this whole editor: nothing is
+   :hover-only (touch devices have no hover state) -- use :active for press
+   feedback and data-active/selection-state for toggled looks instead. */
+
+/* Wraps .editor-mount + DrawLayer as siblings so DrawLayer's canvas can be
+   absolutely positioned (inset: 0) to exactly cover the editor's content
+   area without being a DOM child of .editor-mount itself -- that element is
+   handed to Milkdown as its root (rootCtx) and Milkdown manages its children
+   directly, so adding React-rendered siblings inside it risks the two fighting
+   over the same DOM node's children. This wrapper takes over the
+   `flex: 1 1 auto; min-height: 0` role .editor-mount used to have directly
+   against .editor-surface (see editor-page.css); .editor-mount keeps that
+   same role one level deeper, against this wrapper, unchanged otherwise. */
+.editor-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.editor-mount {
+  /* Milkdown inserts its own .milkdown wrapper as a CHILD of this element
+     (confirmed directly via the rendered DOM -- it is NOT the same element),
+     and editor-page.css already gives that wrapper
+     `flex: 1 1 auto; min-height: 0; overflow-y: auto;`, meant to be the
+     actual scroll container. That only works if ITS PARENT (this element)
+     is a flex container -- otherwise those flex properties are inert and
+     .milkdown just grows to fit all content with nothing to scroll within
+     (confirmed directly: without this, a long document's overflow was never
+     actually clipped/scrollable at all, a pre-existing gap independent of
+     the keyboard). */
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0.75rem;
+  padding-bottom: calc(44px + 1.5rem); /* static room for the toolbar row */
+  /* --keyboard-inset (set inline by Editor.tsx from useKeyboardInset): shrinks
+     this flex item's own rendered height, which -- now that .milkdown
+     actually flexes to fill it -- correctly shrinks .milkdown's box too, so
+     ProseMirror's/the browser's scroll-into-view logic treats the
+     keyboard-covered region as not visible and scrolls the caret clear of
+     it. Plain padding-bottom was tried first and confirmed NOT to work here:
+     it only adds dead space to the *scrollable content*, not a reduction in
+     any ancestor's own on-screen box. */
+  margin-bottom: var(--keyboard-inset, 0px);
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+}
+
+.editor-mount .ProseMirror {
+  outline: none;
+  min-height: 60vh;
+}
+
+/* Thin wrapper around the virtualized scroller -- kept even though it now
+   wraps a single child (the page nav bar it used to sit alongside moved out
+   to Editor.tsx, see VirtualizedEditorBody.tsx's own doc comment) so
+   .editor-mount-virtualized keeps the same "flex: 1 1 auto; min-height: 0,
+   one level deep" role it's always had via the shared .editor-mount class
+   rule above, unchanged otherwise. */
+.virtualized-editor-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Page navigation bar ("<- Page N/Total ->") -- a navigation affordance on
+   top of the existing continuous-scroll virtualization (see
+   VirtualizedEditorController's scrollToPage), not a separate rendering
+   mode. Rendered by Editor.tsx as a flex-row sibling of `.editor-content`
+   (same "top header area" row ModeHeader.tsx occupies), NOT inside
+   `.editor-content` -- it used to live there, as a sibling of the scroller,
+   which is correct in normal document flow but DrawLayer's canvas
+   (`.draw-layer`, `position: absolute; inset: 0` against `.editor-content`)
+   covers that entire box regardless of flow, so it visually covered the nav
+   bar too whenever draw mode was active. Living outside `.editor-content`
+   entirely means it's structurally unreachable by that overlay, the same
+   way ModeHeader/Toolbar already are. */
+.virtualized-page-nav {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  font-size: 0.875rem;
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.virtualized-page-nav-button {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid rgba(0, 0, 0, 0.23);
+  border-radius: 4px;
+  background: #fff;
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.virtualized-page-nav-button:active:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.virtualized-page-nav-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.virtualized-page-nav-label {
+  min-width: 7rem;
+  text-align: center;
+}
+
+/* Virtualized path (VirtualizedEditorBody, see Editor.tsx's
+   CHUNK_SIZE_THRESHOLD): this element IS the scroll container directly --
+   there's no inner .milkdown wrapper to delegate overflow-y to, since each
+   chunk mounts (and unmounts) its own independent Milkdown instance as a
+   .milkdown-chunk-root child instead of one Milkdown instance owning this
+   whole element (see VirtualizedEditorController). `contain: layout style`
+   mirrors milkdown-chunk-editor's own .editor-scroller rule -- the absolutely
+   positioned chunk slots need this element as their containing block. */
+.editor-mount-virtualized {
+  position: relative;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  contain: layout style;
+}
+
+/* Each chunk is one section of a larger document, not the whole thing --
+   the 60vh "tappable space below short content" rule above exists for
+   click-past-end's single-document use case and would otherwise force a
+   large empty gap after every heading section here. */
+.editor-mount-virtualized .ProseMirror {
+  min-height: 0;
+}
+
+/* ...except the document's actual LAST chunk (data-is-last-chunk, kept
+   accurate across recycling by VirtualizedEditorController/chunkMount.ts's
+   rebind()) -- that one genuinely needs the same tappable space below its
+   content as the single-editor path, since it's the real end of the
+   document: without this, a tap in the blank area below a short final
+   chunk never reaches that chunk's own .ProseMirror (whose box would
+   otherwise end exactly at its content, per the min-height:0 rule above),
+   so clickPastEnd.ts's "tap past everything to keep writing" never fires
+   there -- confirmed directly as a real, reachable bug, not a cosmetic one. */
+.editor-mount-virtualized .milkdown-chunk-root[data-is-last-chunk="true"] .ProseMirror {
+  min-height: 60vh;
+}
+
+/* "Page"-sized chunks: only while there's actually more than one page to
+   page through (data-has-multiple-pages, set once by the controller from
+   store.chunks.length -- never changes after that, so this never needs to
+   toggle). Every chunk, including the last, gets min-height equal to the
+   scroller's own available height (--chunk-viewport-height, kept in sync
+   with scroller.clientHeight by the controller -- see
+   updateViewportHeightVar()/handleResize()), so each page-turn via
+   scrollToPage() feels like filling the screen rather than scrolling a
+   fraction of it. Same specificity as the data-is-last-chunk rule above
+   (4 class/attribute selectors each) -- wins via source order, since this
+   is the more accurate value (the real available area, not a guessed
+   60vh) and should supersede it whenever both could apply. */
+.editor-mount-virtualized[data-has-multiple-pages="true"] .milkdown-chunk-root .ProseMirror {
+  min-height: var(--chunk-viewport-height, 0);
+}
+
+/* A visible gap between pages (not after the last one -- nothing follows
+   it). `padding-bottom` on the WRAPPER, not `.ProseMirror` itself: padding
+   never collapses (unlike margin, which could collapse through this
+   absolutely-positioned slot's own auto-sized box, an unreliable way to
+   grow it), so it reliably becomes part of .milkdown-chunk-root's own
+   rendered height -- which is exactly what measure()'s
+   getBoundingClientRect() reads, so VirtualLayout picks up the gap
+   automatically as part of each page's real height. No changes needed
+   anywhere in virtualizedEditorController.ts/chunkMount.ts for this: the
+   gap is purely a consequence of it being real layout space, not a
+   decorative overlay. The gap itself isn't meant to be tappable --
+   unlike the earlier dead-zone bug (a large, accidental mismatch that
+   broke normal editing), this is a small, deliberate visual divider
+   outside .ProseMirror's own box on purpose, the same way a physical
+   page's edge isn't part of its own writable area. */
+.editor-mount-virtualized[data-has-multiple-pages="true"] .milkdown-chunk-root:not([data-is-last-chunk="true"]) {
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.editor-mount .is-editor-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: rgba(0, 0, 0, 0.38);
+  pointer-events: none;
+}
+
+.editor-mount table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.editor-mount td,
+.editor-mount th {
+  border: 1px solid rgba(0, 0, 0, 0.23);
+  padding: 0.4em 0.6em;
+}
+
+.editor-mount th {
+  background: #f6f8fa;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* Images previously rendered at their raw pixel dimensions (the image node's
+   own toDOM sets no size at all) -- a phone-camera photo could be thousands
+   of pixels wide, dwarfing the editor's own content width. Capped to a
+   thumbnail size here rather than the content width, specifically so it
+   reads as "tap to see full size" (see Toolbar.tsx's Preview action) rather
+   than looking like the image is simply displayed at its real size. Aspect
+   ratio preserved via height: auto (no cropping). */
+.editor-mount img {
+  display: block;
+  max-width: 200px;
+  max-height: 200px;
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.editor-mount video,
+.editor-mount audio {
+  display: block;
+  max-width: 100%;
+}
+
+.editor-mount video {
+  border-radius: 4px;
+  background: #000;
+}
