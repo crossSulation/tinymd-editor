@@ -2,6 +2,7 @@ package com.tinymdeditor.app
 
 import android.content.res.Configuration
 import android.os.Bundle
+import android.view.ActionMode
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
@@ -41,6 +42,36 @@ class MainActivity : TauriActivity() {
       )
       insets
     }
+    // ATTEMPT, not yet confirmed: suppress the native long-press text-
+    // selection action-mode toolbar (Copy/Share/etc. -- see CLAUDE.md's
+    // "No floating selection toolbar" section) via the GENERIC Android
+    // View.OnLongClickListener, returning true to mark the long-press
+    // "consumed" so the platform doesn't perform its own default handling
+    // for it -- a different, much cheaper mechanism than the
+    // already-ruled-out approach (overriding startActionMode, which needs
+    // a custom WebView subclass wry doesn't expose without a fork).
+    // UNCERTAIN this actually intercepts a long-press ON SELECTABLE TEXT
+    // specifically: WebView's own content rendering (Chromium) does its
+    // own internal touch-to-gesture translation for text selection
+    // directly against the raw touch stream, which may invoke its
+    // ActionMode-based selection UI without ever going through the outer
+    // View's generic long-click dispatch at all -- this is exactly the
+    // mechanism the prior, already-documented investigation found no
+    // durable hook into. Left in to actually test on a real device rather
+    // than ruling it out by reasoning alone; remove if it doesn't help.
+    webView.setOnLongClickListener { true }
+    // `View` has no such thing as `setOnDoubleTapListener` -- double-tap/
+    // pinch zoom on a WebView is governed by WebSettings, not a generic
+    // View gesture listener. This is the actual, documented API for it,
+    // and more robust than relying on index.html's viewport meta tag
+    // (`user-scalable=no`) alone -- that already should suppress it at
+    // the web-content level, but this disables it natively regardless of
+    // whatever Chromium's own gesture recognition does with the page's
+    // viewport meta (the same category of "web-standard CSS/meta isn't
+    // always fully respected by WebView's own native gesture handling"
+    // issue already confirmed for two-finger pinch/pan -- see
+    // DrawLayer.tsx's own two-finger-scroll entry in CLAUDE.md).
+    webView.settings.setSupportZoom(false)
   }
 
   // AndroidManifest.xml declares android:configChanges including
@@ -72,5 +103,32 @@ class MainActivity : TauriActivity() {
   override fun onConfigurationChanged(newConfig: Configuration) {
     super.onConfigurationChanged(newConfig)
     webViewRef?.requestLayout()
+  }
+
+  // A DIFFERENT, more promising hook than subclassing WebView itself (the
+  // already-ruled-out approach, which needs a wry fork): Activity already
+  // implements Window.Callback, and View.startActionMode(...) -- what
+  // WebView's own internal Chromium code calls to show its text-selection
+  // toolbar -- walks UP to the hosting Activity's onWindowStartingActionMode
+  // when nothing closer in the view hierarchy handles it first. WebView's
+  // selection toolbar has used ActionMode.TYPE_FLOATING since Android M, so
+  // overriding the type-aware overload specifically targets that case;
+  // the legacy (type-less) overload is overridden too for completeness,
+  // in case some code path still goes through it. Returning null tells
+  // the platform "no action mode created" -- suppresses it outright,
+  // rather than customizing its contents. No WebView subclass needed, so
+  // this survives gen/android regeneration the same way the rest of this
+  // file already does (MainActivity.kt is the one legitimate, durable
+  // customization point -- see CLAUDE.md's Tauri/Android section).
+  // NOT YET CONFIRMED on a real device whether WebView's selection UI
+  // actually routes through this standard Android mechanism at all, or
+  // implements its own popup entirely outside it -- worth testing
+  // directly rather than ruling out by reasoning alone.
+  override fun onWindowStartingActionMode(callback: ActionMode.Callback?): ActionMode? {
+    return null
+  }
+
+  override fun onWindowStartingActionMode(callback: ActionMode.Callback?, type: Int): ActionMode? {
+    return null
   }
 }
