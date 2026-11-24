@@ -3,6 +3,8 @@ package com.tinymdeditor.app
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.ActionMode
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
@@ -19,6 +21,12 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
   }
 
+  override fun onStart() {
+    super.onStart()
+    window.decorView.post {
+       disableWebViewLongClick(window.decorView)
+    }
+  }
   // enableEdgeToEdge() means the window deliberately does NOT resize when the
   // soft keyboard appears (that's the whole point of edge-to-edge), and this
   // WebView's visualViewport does not reliably report the IME inset either
@@ -131,4 +139,43 @@ class MainActivity : TauriActivity() {
   override fun onWindowStartingActionMode(callback: ActionMode.Callback?, type: Int): ActionMode? {
     return null
   }
+
+  // Reactive fallback to the preventive onWindowStartingActionMode above,
+  // which returning null from did NOT stop WebView's selection toolbar
+  // (confirmed on-device). THIS one, by contrast, IS confirmed to fire for
+  // WebView's selection action mode -- apparently a separate notification
+  // path, not gated by the same creation-veto point as the other hook --
+  // and `finish()` does dismiss it. But it's a NOTIFICATION-only callback
+  // (the mode, and its own platform-controlled show animation, already
+  // exist by the time this fires), so there's still a brief visible flash
+  // before it closes, confirmed directly on-device -- including re-firing
+  // (and re-flashing) on every selection CHANGE, not just the initial
+  // long-press, since Android treats dragging a selection handle as a
+  // fresh onActionModeStarted each time. Clearing the menu first means
+  // that flash is an empty bar, not one showing Copy/Share buttons -- a
+  // small mitigation, not a fix for the flash itself: there's no public
+  // API to disable ActionMode's own entrance animation, and going further
+  // than this (reflection into private fields) would be a worse trade
+  // than even forking wry.
+  override fun onActionModeStarted(mode: ActionMode) {
+    mode.menu.clear() // so the brief flash shows an empty bar, not Copy/Share
+    mode.finish()
+    super.onActionModeStarted(mode)
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    webViewRef = null
+  }
+
+  private fun disableWebViewLongClick(view: View) {
+        if (view is WebView) {
+            view.isLongClickable = false
+            view.setOnLongClickListener { true } // 返回 true 消费掉长按事件，不再向上传递
+        } else if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                disableWebViewLongClick(view.getChildAt(i))
+            }
+        }
+    }
 }
