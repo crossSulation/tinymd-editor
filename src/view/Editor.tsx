@@ -7,7 +7,8 @@ import { buildMilkdownEditor } from "./createMilkdownEditor";
 import { createCommands, type EditorCommands } from "./commands";
 import { Toolbar } from "./Toolbar";
 import { DrawLayer } from "./DrawLayer";
-import { ModeHeader, PEN_STYLES, type EditorMode, type PenStyle } from "./ModeHeader";
+import { PagingLayer } from "./PagingLayer";
+import { ModeHeader, PEN_STYLES, type EditorMode, type PenStyle, type DrawAnchorMode } from "./ModeHeader";
 import { VirtualizedEditorBody } from "./VirtualizedEditorBody";
 import { VirtualizedEditorController } from "./virtualizedEditorController";
 import { useKeyboardInset } from "./useKeyboardInset";
@@ -15,6 +16,7 @@ import "./toolbar.css";
 import "./code-block-layout.css";
 import "./editor-base.css";
 import "./draw-layer.css";
+import "./paging-layer.css";
 import "./mode-header.css";
 
 // Above this, a single ProseMirror view holding the entire document starts
@@ -57,6 +59,8 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
   const [, bumpTick] = useState(0);
   const [mode, setMode] = useState<EditorMode>("text");
   const [penStyle, setPenStyle] = useState<PenStyle>(PEN_STYLES[0]!);
+  const [anchorMode, setAnchorMode] = useState<DrawAnchorMode>("pin");
+  const [pagingMode, setPagingMode] = useState(false);
   const keyboardInset = useKeyboardInset();
   // The virtualized path's own analogue of "editor still null" below -- a
   // chunk needs to actually mount before DrawLayer can resolve/persist a
@@ -204,6 +208,10 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
         onModeChange={handleModeChange}
         penStyle={penStyle}
         onPenStyleChange={setPenStyle}
+        anchorMode={anchorMode}
+        onAnchorModeChange={setAnchorMode}
+        pagingMode={pagingMode}
+        onPagingModeChange={setPagingMode}
         // Single-instance: its own brief startup window (editor still
         // null). Virtualized: the analogous window before any chunk has
         // mounted yet (see anyChunkMounted's own doc comment) -- not a
@@ -259,12 +267,14 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
           <div
             ref={mountRef}
             className="editor-mount"
+            data-keyboard-open={keyboardInset > 0 || undefined}
             style={{ "--keyboard-inset": `${keyboardInset}px` } as CSSProperties}
           />
         )}
         <DrawLayer
           active={mode === "draw"}
           penStyle={penStyle}
+          anchorMode={anchorMode}
           // The single, stable instance gets real reflow-anchoring directly
           // against it. The virtualized path's `editor` is whichever chunk
           // currently has focus (a transient, per-chunk view that gets
@@ -292,6 +302,7 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
           }}
           onChunkInkPersisted={handleChunkInkPersisted}
         />
+        <PagingLayer active={pagingMode} />
       </div>
       {mode === "text" && editor && commands && <Toolbar editor={editor} commands={commands} />}
     </div>

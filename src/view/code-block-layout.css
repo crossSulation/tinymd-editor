@@ -11,6 +11,18 @@
   background: #fafafa;
 }
 
+/* `.selected` is toggled by the NodeView itself (selectNode()/
+   deselectNode(), confirmed directly against @milkdown/components' own
+   source) whenever ProseMirror's selection is a NodeSelection pointing at
+   this code block -- reached via codeBlockLongPress.ts's long-press
+   gesture, since an ordinary tap never can (see Toolbar.tsx's own
+   selectedMediaType entry). A visible highlight here is the only feedback
+   the user gets that their long-press registered at all. */
+.milkdown .milkdown-code-block.selected {
+  outline: 2px solid #1976d2;
+  outline-offset: 2px;
+}
+
 .milkdown .milkdown-code-block .tools {
   display: flex;
   align-items: center;
@@ -50,19 +62,63 @@
   cursor: pointer;
 }
 
+/* Mobile "action sheet" style: a bottom-anchored, full-width sheet instead
+   of a small dropdown near the trigger button. @floating-ui/dom (used
+   internally by @milkdown/components -- confirmed directly against its
+   own source, not assumed) repositions THIS element (not .list-wrapper)
+   near the trigger via plain `style.left`/`style.top` JS assignment on
+   every open/close, which that API has no way to mark `!important` itself
+   -- so `!important` here reliably wins regardless of what it last
+   computed. */
 .milkdown .milkdown-code-block .language-picker {
-  position: absolute;
+  position: fixed !important;
+  top: auto !important;
+  left: 0 !important;
+  right: 0;
+  bottom: 0;
+  width: 100%;
   z-index: 20;
 }
 
 .milkdown .milkdown-code-block .list-wrapper {
   background: #fff;
   border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  max-height: 300px;
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.2);
+  max-height: 60vh;
   overflow-y: auto;
-  min-width: 180px;
+  width: 100%;
+}
+
+@keyframes code-block-sheet-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Dimming backdrop + tap-outside-to-close, both for free, no new JS:
+   rendered as a pseudo-element of the OUTER .milkdown-code-block (NOT
+   .language-picker itself), so a tap on it reports `event.target` as the
+   code block -- which @milkdown/components' own `window` "click" listener
+   (`clickHandler`, confirmed directly against its source) already treats
+   as OUTSIDE the picker (`picker.contains(target)` is false for an
+   ANCESTOR of the picker, same as any unrelated element), closing the
+   sheet via the library's EXISTING logic. A backdrop rendered inside
+   .language-picker's own subtree instead would be wrongly treated as a
+   click "inside" it and never close -- confirmed directly: a pseudo-
+   element has no DOM identity of its own for event targeting, a click
+   landing on one always reports its real HOST element as the target.
+   z-index: 19, one below the sheet's own 20, so the sheet paints above
+   its own backdrop rather than under it. */
+.milkdown .milkdown-code-block:has(.language-button[data-expanded="true"])::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 19;
 }
 
 .milkdown .milkdown-code-block .search-box {

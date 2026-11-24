@@ -21,6 +21,17 @@ export interface InkPoint {
 export interface InkStroke {
   penStyle: { color: string; width: number; opacity?: number };
   points: InkPoint[];
+  /**
+   * True for a "pin"-mode (Word-style whole-block-anchored, rigid) stroke --
+   * omitted (falsy) for an ordinary "markup"-mode (per-point reflow-
+   * anchored) one. Added as a new optional field rather than a `v` bump
+   * (still `1`): every existing document without this field already means
+   * exactly what it meant before (ordinary per-point anchoring), so this is
+   * fully backward compatible with no migration needed. See
+   * DrawLayer.tsx's PmRigidPoint/PmChunkRigidPoint for how this flag
+   * round-trips to/from the live in-memory point kind.
+   */
+  rigid?: boolean;
 }
 
 export interface InkData {

@@ -1,10 +1,17 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  type PointerEvent as ReactPointerEvent,
+  type TouchEvent as ReactTouchEvent,
+  type TouchList as ReactTouchList,
+} from "react";
 import { type Editor as MilkdownEditor, editorViewCtx, schemaCtx } from "@milkdown/kit/core";
 import type { Transaction } from "@milkdown/kit/prose/state";
 import type { EditorView } from "@milkdown/kit/prose/view";
 import { readInkData, writeInkData, INK_SYNC_META, type InkData, type InkStroke } from "./inkPersistence";
 import { CONTENT_REPLACE_META } from "./dirtyPlugin";
-import type { PenStyle } from "./ModeHeader";
+import type { PenStyle, DrawAnchorMode } from "./ModeHeader";
+import { strokeOutlineToPath2D } from "./freehandStroke";
 
 export interface DrawLayerProps {
   /** Whether draw mode is active -- owned by Editor.tsx's ModeHeader, not this component itself. */
@@ -65,6 +72,29 @@ export interface DrawLayerProps {
   registerChunkReadyHandler: (handler: ((chunkId: string, editor: MilkdownEditor) => void) | null) => void;
   /** Chunked analogue of `onInkPersisted`, parameterized by chunk id -- see that prop's own doc comment for why this bypass is needed at all. */
   onChunkInkPersisted: (chunkId: string) => void;
+  /**
+   * Which of ModeHeader's two draw modes is currently selected -- see
+   * `DrawAnchorMode`'s own doc comment. "sketch" makes `capturePoint` skip
+   * the rigid-anchoring attempt entirely (even though an editor/chunk IS
+   * live) and every point captures as scroll-anchored instead -- the same
+   * mechanism already used as an automatic startup-window fallback, now
+   * also reachable as a deliberate, user-chosen mode for strokes that are
+   * "just drawing," not markup meant to track specific text. "pin"
+   * resolves ONE shared anchor position for the whole gesture -- the
+   * nearest enclosing textblock (paragraph/heading/table-cell-paragraph/
+   * etc.) under wherever the stroke STARTS -- and every point of that
+   * stroke stores only its pixel offset from that one shared position; see
+   * `resolveRigidAnchor`'s own comment for why this makes a "pin" stroke
+   * translate as one rigid, undistorted unit. A third, no-longer-
+   * selectable kind of point ("markup", per-point reflow) can still be
+   * read from an existing document -- see this file's own top-of-file
+   * comment. Each kind of stroke is correspondingly included/excluded from
+   * `handleTransaction`/`handleChunkTransaction`'s remapping and from
+   * `syncInkSingle`/`syncInkForChunk`'s persistence purely via the
+   * captured point's own `kind` -- no separate gating needed at those call
+   * sites.
+   */
+  anchorMode: DrawAnchorMode;
 }
 
 interface PmPoint {
@@ -99,53 +129,135 @@ interface ScrollPoint {
   yDoc: number;
 }
 
-type StrokePoint = PmPoint | PmChunkPoint | ScrollPoint;
+// "Pin" mode's whole-stroke-rigid analogue of PmPoint/PmChunkPoint: same
+// shape (a position plus a pixel offset from it), but every point of ONE
+// stroke shares the IDENTICAL `pos` -- the stroke's single resolved block
+// anchor (see `resolveRigidAnchor`) -- rather than each point having its
+// own independently-captured position. This is what makes the existing
+// per-point remapping loops in handleTransaction/handleChunkTransaction
+// produce RIGID (not reflowing) behavior for free, with no new remapping
+// logic needed: `tr.mapping` is a deterministic function of position, so
+// every point maps to the identical new position together, and if the
+// shared anchor's content is deleted, every point is pruned together in
+// the same transaction -- the whole stroke naturally falls to zero points
+// and gets filtered out by the already-existing empty-stroke filter.
+interface PmRigidPoint {
+  kind: "pm-rigid";
+  pos: number;
+  dx: number;
+  dy: number;
+}
+
+interface PmChunkRigidPoint {
+  kind: "pm-chunk-rigid";
+  chunkId: string;
+  pos: number;
+  dx: number;
+  dy: number;
+}
+
+type StrokePoint = PmPoint | PmChunkPoint | PmRigidPoint | PmChunkRigidPoint | ScrollPoint;
 
 interface Stroke {
   points: StrokePoint[];
   penStyle: PenStyle;
+  /**
+   * Real per-point `PointerEvent.pressure`, index-aligned with `points` --
+   * only ever present for a stroke drawn with `pointerType === "pen"` (see
+   * `pressuresRef`). Safe to prune/filter `points` without keeping this in
+   * sync: a pressure-carrying stroke can only be "pin"/"pin-chunk" kind
+   * (the only modes a NEW stroke can be drawn as -- see `capturePoint`),
+   * and every point of a rigid stroke shares the SAME anchor `pos`, so
+   * remapping/pruning in handleTransaction/handleChunkTransaction is
+   * always all-or-nothing for the whole stroke, never a partial subset of
+   * points -- there is no scenario where `points` shrinks to a PARTIAL
+   * selection that would leave this array's indices misaligned.
+   */
+  pressures?: number[];
 }
 
-// A free-floating ink layer over the editor's visible content area. Three
-// anchoring strategies, chosen PER POINT at the moment it's drawn (not
-// necessarily uniform across a whole stroke, though in practice it always
-// is -- which anchoring is available doesn't change mid-gesture):
+/** The one shared anchor resolved for a "pin"-mode gesture -- see `resolveRigidAnchor`. */
+type RigidAnchor = { kind: "pm-rigid"; pos: number } | { kind: "pm-chunk-rigid"; chunkId: string; pos: number };
+
+// Caps point collection during a gesture to roughly one sample per display
+// frame at 60fps -- touch/mouse input can fire `pointermove` well above
+// that rate (some digitizers/trackpads report at 90-240Hz), and both the
+// per-point capture cost (`pin` mode's own `coordsAtPos` lookup) and the
+// per-move redraw cost (`toCanvasPoints` resolving EVERY point of the
+// stroke so far, then perfect-freehand's own `getStroke` recomputing the
+// whole outline from scratch) scale with how many points the stroke has
+// accumulated -- sampling faster than the screen can even repaint adds CPU
+// work with no visible benefit, and makes that per-move cost grow needlessly
+// faster as a long stroke accumulates points it never needed to capture.
+const SAMPLE_INTERVAL_MS = 16;
+
+// A second finger joining this soon after the first touched down is
+// treated as "the user was still getting both fingers down for a
+// two-finger scroll," not a deliberate single-finger stroke -- whatever
+// was drawn in that brief window is DISCARDED (not committed) once
+// panning starts. Confirmed directly as a real, user-visible gap, not
+// theoretical: without this, EVERY two-finger scroll attempt left a tiny
+// stray mark from the first finger's own brief touch-and-slight-move
+// before the second finger landed (natural hand tremor/positioning, not
+// an intentional stroke). Outside this window, a second finger joining
+// means the user had already been drawing for a while -- that stroke is
+// genuine and still gets committed normally (same as lifting the first
+// finger on its own would).
+const TWO_FINGER_GRACE_MS = 250;
+
+// A free-floating ink layer over the editor's visible content area. A NEW
+// stroke is captured one of two ways, per ModeHeader's Pin/Sketch toggle:
 //
-//   - PM-anchored (`editor` present -- the single-instance path only): each
-//     point is captured as a real ProseMirror document position (via
-//     `view.posAtCoords`) plus a small pixel offset from that position's
-//     own on-screen coordinates. `registerTransactionHandler` subscribes to
-//     every doc-changing transaction so each point's `pos` can be remapped
-//     through `tr.mapping` as edits happen (a point whose anchor content
-//     was deleted is dropped, not left pointing at the wrong place) --
-//     redrawing afterward via `view.coordsAtPos(pos)` naturally reflects
-//     BOTH scroll and reflow, since that call already accounts for
-//     whatever the current, post-edit layout actually is.
-//   - PM-chunk-anchored (`getChunkEditor` present -- the virtualized path):
-//     the same mechanism, but resolved against WHICHEVER chunk is actually
-//     under a given point (found via the DOM, see
-//     `findChunkEditorAtPoint`) rather than one shared editor, and each
-//     point's `pos` is only ever remapped through transactions from its
-//     OWN chunk (`registerChunkTransactionHandler`, tagged per chunk).
-//   - Scroll-anchored (neither available): the simplest mechanism -- a
-//     point is `clientY + scrollTop` at capture time, re-projected as
-//     `yDoc - currentScrollTop` on redraw. Tracks scrolling but NOT reflow.
-//     This is what either path falls back to during its own brief startup
-//     window (before the single instance, or any chunk, has mounted yet --
-//     see ModeHeader.tsx's `drawDisabled`, which prevents drawing during
-//     that exact window specifically so a stroke never silently lands here
-//     when the user would reasonably expect it to persist).
+//   - PM-rigid / PM-chunk-rigid ("pin" mode, the default): ONE anchor
+//     position is resolved for the whole gesture (the nearest enclosing
+//     textblock under wherever the stroke starts -- see
+//     `resolveRigidAnchor`'s own comment for the full design), and every
+//     point stores only its pixel offset from that single shared position.
+//     `registerTransactionHandler`/`registerChunkTransactionHandler`
+//     remap every point's `pos` through `tr.mapping` as edits happen --
+//     since every point of a rigid stroke shares the same starting `pos`,
+//     `tr.mapping`'s determinism makes them all move together as one
+//     rigid, undistorted unit, and if the shared anchor is deleted, every
+//     point is pruned in the same transaction, so the whole stroke
+//     disappears as a unit rather than partially distorting.
+//   - Scroll-anchored ("sketch" mode, or a startup-window/resolution
+//     fallback): the simplest mechanism -- a point is `clientY + scrollTop`
+//     at capture time, re-projected as `yDoc - currentScrollTop` on redraw.
+//     Tracks scrolling but NOT reflow, and never persists. Reached two
+//     different ways: automatically, during either path's own brief
+//     startup window (before the single instance, or any chunk, has
+//     mounted yet -- see ModeHeader.tsx's `drawDisabled`, which prevents
+//     drawing during that exact window specifically so a stroke never
+//     silently lands here when the user would reasonably expect it to
+//     persist); or deliberately, via ModeHeader.tsx's Pin/Sketch toggle
+//     (`anchorMode` prop, see `DrawAnchorMode`'s own doc comment) -- a
+//     user-chosen "just drawing, not markup on this specific text" mode,
+//     for strokes that shouldn't reshape/disappear/translate at all as the
+//     surrounding content is edited.
+//
+// A THIRD kind of point, PM/PM-chunk ("markup": each point captured and
+// remapped independently, so a stroke could reflow/distort as its own
+// specific span was edited), can still be READ from an existing document
+// (`InkStroke.rigid` unset) and fully participates in the same
+// remapping/redraw/persistence machinery as PM-rigid/PM-chunk-rigid below
+// -- but `capturePoint` can no longer PRODUCE one: it existed briefly as a
+// third user-selectable mode and was removed (confirmed too unpredictable
+// in practice -- a stroke spanning edited content could visibly
+// stretch/shrink, exactly the failure "pin" fixes). Keeping full read/
+// render support for it is what lets a document drawn before this change
+// keep working with no migration.
 //
 // Either way, a scroll event still has to trigger a redraw: `coordsAtPos`
 // returns viewport-relative coordinates (like `getBoundingClientRect`), so
 // it genuinely reports a different position after a pure scroll with no
 // doc change, same as the scroll-anchored math does.
 //
-// PM-anchored and PM-chunk-anchored strokes both persist across reloads
-// (see inkPersistence.ts) -- a chunk's own `ink` node lives in that
-// chunk's own markdown, exactly like the single instance's lives in the
-// whole document's. Scroll-anchored strokes don't persist -- a raw
-// scrollTop has no stable meaning across sessions/devices.
+// PM-rigid, PM-chunk-rigid, and (read-only) PM/PM-chunk strokes all persist
+// across reloads (see inkPersistence.ts, `InkStroke.rigid`) -- a chunk's
+// own `ink` node lives in that chunk's own markdown, exactly like the
+// single instance's lives in the whole document's. Scroll-anchored strokes
+// don't persist -- a raw scrollTop has no stable meaning across
+// sessions/devices.
 export function DrawLayer({
   active,
   penStyle,
@@ -156,6 +268,7 @@ export function DrawLayer({
   registerChunkTransactionHandler,
   registerChunkReadyHandler,
   onChunkInkPersisted,
+  anchorMode,
 }: DrawLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -167,14 +280,20 @@ export function DrawLayer({
   // different scroll/layout than when they were drawn; a plain raster
   // can't be "re-flowed" on its own.
   const strokesRef = useRef<Stroke[]>([]);
-  // The in-progress stroke's points. Re-stroked as one single path on every
-  // move (not segment-by-segment) for the same reason the committed-canvas
-  // split below exists: semi-transparent pens (the highlighter) need every
-  // self-overlapping segment of a path rasterized and alpha-composited
-  // ONCE, not once per tiny segment, or the overlapping round joints
-  // double-blend into a visibly "bumpy" line instead of a smooth
-  // translucent one (confirmed directly -- it looked like a string of
-  // pearls).
+  // The in-progress stroke's points. Re-rendered as one single filled
+  // perfect-freehand outline on every move (not segment-by-segment), for
+  // the same underlying reason the committed-canvas split below exists:
+  // semi-transparent pens (the highlighter) need every self-overlapping
+  // region of a shape rasterized and alpha-composited ONCE, not once per
+  // tiny segment, or overlapping regions double-blend into a visibly
+  // "bumpy" look instead of a smooth translucent one (confirmed directly,
+  // back when this was a stroked polyline rather than a filled outline --
+  // it looked like a string of pearls). A single `ctx.fill()` of one
+  // outline polygon (see freehandStroke.ts) gets this for free: Canvas2D's
+  // nonzero fill rule resolves a self-intersecting path's overlap as part
+  // of rasterizing ONE shape, with `globalAlpha` applied once across all
+  // of it -- not as separately-composited regions the way stroking the
+  // same self-overlapping path segment-by-segment would.
   const pointsRef = useRef<StrokePoint[]>([]);
   // The "baseline" layer: every COMPLETED stroke, pre-rendered, kept in
   // sync with strokesRef by redrawAll (see its own comment). An offscreen
@@ -206,6 +325,104 @@ export function DrawLayer({
   editorRef.current = editor;
   const getChunkEditorRef = useRef(getChunkEditor);
   getChunkEditorRef.current = getChunkEditor;
+  const anchorModeRef = useRef(anchorMode);
+  anchorModeRef.current = anchorMode;
+  // Holds the ONE anchor resolved for "pin" mode's current gesture --
+  // populated on the first `capturePoint` call after `handlePointerDown`
+  // resets it to null, then reused (not re-resolved) by every later point
+  // of the SAME gesture. This is what actually guarantees rigidity: every
+  // point of one stroke sharing this identical ref value is what makes them
+  // all carry the identical `pos`, not just a coincidence of where the
+  // pointer happened to move.
+  const rigidAnchorRef = useRef<RigidAnchor | null>(null);
+  // The `timeStamp` (DOMHighResTimeStamp, same clock as `performance.now()`)
+  // of the last point actually captured during the current gesture -- see
+  // `SAMPLE_INTERVAL_MS`'s own comment. Reset on every `handlePointerDown`
+  // to that event's own timestamp, not left at whatever a PREVIOUS gesture
+  // last set it to -- otherwise a new stroke started very soon after the
+  // last one ended could have its own first pointermove incorrectly
+  // throttled against a stale timestamp from the unrelated earlier gesture.
+  const lastSampleTimeRef = useRef(0);
+  // Fixed at the CURRENT gesture's own `pointerdown` timestamp, unlike
+  // `lastSampleTimeRef` (which is overwritten by every later move, for
+  // throttling) -- lets `handleTouchMove` tell "a second finger joined
+  // almost immediately" from "this was already a real, ongoing
+  // single-finger stroke" (see `TWO_FINGER_GRACE_MS`'s own comment).
+  const gestureStartTimeRef = useRef(0);
+  // Real per-point pressure for the CURRENT gesture, index-aligned with
+  // `pointsRef` -- only collected when that gesture's own `pointerdown`
+  // reported `pointerType === "pen"` (a real stylus/electronic pen, which
+  // reports pressure reliably), null otherwise (touch/mouse, where
+  // `PointerEvent.pressure` is a meaningless constant on most devices/
+  // browsers -- perfect-freehand's own velocity-based `simulatePressure`
+  // is used for those instead, see freehandStroke.ts). Decided once per
+  // gesture at `pointerdown`, same granularity as `rigidAnchorRef` --
+  // nothing in practice switches input device mid-stroke.
+  const pressuresRef = useRef<number[] | null>(null);
+  // True from the moment a second finger joins until every finger lifts --
+  // while true, `handlePointerMove` skips drawing entirely (the actual pan
+  // scroll is driven by native touch events instead, see below), and
+  // drawing does NOT resume just because the touch count drops back to 1
+  // (waits for a fresh single-finger gesture instead), avoiding a surprise
+  // stroke starting from wherever a remaining finger happens to be.
+  const isPanningRef = useRef(false);
+  // The average client Y of all active TOUCHES as of the last pan-relevant
+  // move -- deltas between consecutive averages drive the scroll, not an
+  // absolute position (so panning starts smoothly from wherever the second
+  // finger actually touched down, not from 0).
+  const panLastYRef = useRef(0);
+
+  // Driven by native `TouchEvent`s (`event.touches`, see the `onTouchMove`
+  // handler below), NOT `PointerEvent` dispatch counting -- a second
+  // finger's own `pointerdown` is NOT a reliable signal for this on a real
+  // Android WebView (confirmed directly: a synthetic-PointerEvent-based
+  // CDP test of exactly this logic passed, but real on-device two-finger
+  // touch still drew instead of scrolling -- pointing at a real device/
+  // WebView-specific gap in per-touch pointer-event dispatch, not a logic
+  // bug). `TouchEvent.touches` is the browser's own single, authoritative
+  // list of every finger currently down, with no per-element dispatch
+  // ambiguity for additional simultaneous touches the way waiting on each
+  // one's own separate `pointerdown` has. The standard "one finger draws,
+  // two (or more) fingers scroll" convention (Notability/GoodNotes/
+  // Procreate etc. all do this).
+  function averageTouchY(touches: ReactTouchList): number {
+    let sum = 0;
+    for (let i = 0; i < touches.length; i++) sum += touches[i]!.clientY;
+    return touches.length > 0 ? sum / touches.length : 0;
+  }
+
+  function handleTouchMove(event: ReactTouchEvent<HTMLCanvasElement>) {
+    if (event.touches.length < 2) return;
+    const currentY = averageTouchY(event.touches);
+    if (!isPanningRef.current) {
+      // First multi-touch move detected. A second finger joining THIS
+      // SOON after the first touched down means the user was still
+      // getting both fingers down for a scroll -- whatever that brief
+      // touch-and-slight-move drew is incidental, not an intentional
+      // stroke, so it's discarded rather than committed (see
+      // TWO_FINGER_GRACE_MS's own comment). Outside that window, this is
+      // a real, ongoing single-finger stroke -- commit it normally, same
+      // as lifting that finger on its own would.
+      if (drawingRef.current && event.timeStamp - gestureStartTimeRef.current < TWO_FINGER_GRACE_MS) {
+        discardDrawing();
+      } else {
+        stopDrawing();
+      }
+      isPanningRef.current = true;
+      panLastYRef.current = currentY;
+      return;
+    }
+    const deltaY = panLastYRef.current - currentY;
+    panLastYRef.current = currentY;
+    const scroller = getScroller();
+    if (scroller) scroller.scrollTop += deltaY;
+  }
+
+  function handleTouchEnd(event: ReactTouchEvent<HTMLCanvasElement>) {
+    if (isPanningRef.current && event.touches.length < 2) {
+      isPanningRef.current = false;
+    }
+  }
 
   // The real scroll container differs by path and isn't always present yet
   // when this component mounts: the single-instance path's is Milkdown's
@@ -214,33 +431,13 @@ export function DrawLayer({
   // `.editor-mount-virtualized` (present immediately). Resolved fresh each
   // call rather than cached, since which one exists can change across the
   // very first render. Only used for scroll-anchored (non-PM) points.
-  function getScrollTop(): number {
+  function getScroller(): HTMLElement | null {
     const content = containerRef.current?.closest(".editor-content");
-    const scroller = content?.querySelector<HTMLElement>(".milkdown, .editor-mount-virtualized");
-    return scroller?.scrollTop ?? 0;
+    return content?.querySelector<HTMLElement>(".milkdown, .editor-mount-virtualized") ?? null;
   }
 
-  // Shared by capturePoint for both the single-instance and per-chunk
-  // cases -- the actual posAtCoords/coordsAtPos dance is identical either
-  // way, only WHICH view it runs against differs.
-  function captureFromView(view: EditorView, clientX: number, clientY: number): { pos: number; dx: number; dy: number } | null {
-    try {
-      const found = view.posAtCoords({ left: clientX, top: clientY });
-      // Drawing below the last line (this view's own click-past-end space)
-      // resolves to nothing -- anchor to the very end of the doc instead,
-      // which correctly tracks growth/shrinkage above it the same as any
-      // other PM-anchored point.
-      const pos = found ? found.pos : view.state.doc.content.size;
-      // side: -1 -- see resolveClientPoint's own comment on why the
-      // default side (1) can resolve to a degenerate zero rect at a
-      // position with nothing meaningfully rendered after it (confirmed
-      // directly: exactly this position, end-of-document/click-past-end,
-      // is also exactly where this function's own fallback above lands).
-      const coords = view.coordsAtPos(pos, -1);
-      return { pos, dx: clientX - coords.left, dy: clientY - coords.top };
-    } catch {
-      return null;
-    }
+  function getScrollTop(): number {
+    return getScroller()?.scrollTop ?? 0;
   }
 
   // Finds which chunk (if any) is actually under a given screen point, and
@@ -265,18 +462,99 @@ export function DrawLayer({
     return null;
   }
 
-  function capturePoint(event: ReactPointerEvent<HTMLCanvasElement>): StrokePoint {
+  // Resolves the nearest enclosing TEXTBLOCK (paragraph/heading/a table
+  // cell's own paragraph/etc. -- anything `NodeType.isTextblock`) under a
+  // screen point, returning the position right at the start of that
+  // block's own content (`$pos.start(d)`, NOT `$pos.before(d)`): a position
+  // strictly INSIDE the block's own content range is required for the
+  // "delete the whole stroke if its anchor block is fully deleted" behavior
+  // to fall out of the existing remapping loops for free -- a position
+  // sitting exactly AT a deleted range's boundary (which `before(d)` would,
+  // since deleting a whole node conventionally deletes the half-open range
+  // `[before(d), after(d))`) is NOT marked `deleted` by ProseMirror's own
+  // mapping (boundary positions survive a deletion, by design), so it would
+  // silently survive instead of correctly vanishing. `start(d)` sits
+  // strictly inside that range, so it IS marked deleted when the whole
+  // block goes away, while still surviving (correctly) if only the block's
+  // TEXT is deleted, leaving an empty-but-still-present block behind.
+  // Deliberately paragraph-granularity, not per-character, same as Word's
+  // own whole-object-anchored-to-one-paragraph behavior this mode is
+  // modeled on -- walking to the NEAREST (innermost) textblock ancestor
+  // means a point inside a table cell anchors to that cell's own
+  // paragraph, which is exactly the granularity that fixes the original
+  // bug report (a stroke spanning several table rows no longer
+  // stretches/shrinks as unrelated rows are inserted/deleted elsewhere,
+  // since it's rigidly anchored to whichever single row/cell it started
+  // in).
+  function resolveBlockAnchorPos(view: EditorView, clientX: number, clientY: number): number | null {
+    try {
+      const found = view.posAtCoords({ left: clientX, top: clientY });
+      const pos = found ? found.pos : view.state.doc.content.size;
+      const $pos = view.state.doc.resolve(pos);
+      for (let d = $pos.depth; d > 0; d--) {
+        if ($pos.node(d).isTextblock) return $pos.start(d);
+      }
+      return pos;
+    } catch {
+      return null;
+    }
+  }
+
+  // "Pin" mode's entry point: resolves the ONE anchor a whole gesture will
+  // share, against whichever of the single-instance editor or a virtualized
+  // chunk is actually live under the given point -- same editor/chunk
+  // resolution as capturePoint's "markup" branch, just producing a single
+  // block-granularity position instead of an exact per-pixel one.
+  function resolveRigidAnchor(clientX: number, clientY: number): RigidAnchor | null {
     const liveEditor = editorRef.current;
     if (liveEditor) {
-      const result = captureFromView(liveEditor.ctx.get(editorViewCtx), event.clientX, event.clientY);
-      if (result) return { kind: "pm", ...result };
-    } else {
-      const chunkMatch = findChunkEditorAtPoint(event.clientX, event.clientY);
-      if (chunkMatch) {
-        const result = captureFromView(chunkMatch.editor.ctx.get(editorViewCtx), event.clientX, event.clientY);
-        if (result) return { kind: "pm-chunk", chunkId: chunkMatch.chunkId, ...result };
+      const pos = resolveBlockAnchorPos(liveEditor.ctx.get(editorViewCtx), clientX, clientY);
+      return pos === null ? null : { kind: "pm-rigid", pos };
+    }
+    const chunkMatch = findChunkEditorAtPoint(clientX, clientY);
+    if (chunkMatch) {
+      const pos = resolveBlockAnchorPos(chunkMatch.editor.ctx.get(editorViewCtx), clientX, clientY);
+      if (pos !== null) return { kind: "pm-chunk-rigid", chunkId: chunkMatch.chunkId, pos };
+    }
+    return null;
+  }
+
+  function capturePoint(event: ReactPointerEvent<HTMLCanvasElement>): StrokePoint {
+    // "markup" (per-point PM/PM-chunk anchoring) is no longer a mode a NEW
+    // stroke can be captured as -- removed as a user-selectable option
+    // (see DrawAnchorMode's own doc comment: confirmed too unpredictable
+    // in practice, the exact failure "pin" was built to fix). The "pm"/
+    // "pm-chunk" point kinds and all their remapping/redraw/persistence
+    // logic elsewhere in this file stay fully intact regardless -- purely
+    // to keep rendering/reflowing any such points an EXISTING document
+    // already has persisted, not to support drawing new ones here.
+    if (anchorModeRef.current === "pin") {
+      // Resolved once per gesture (handlePointerDown clears this ref before
+      // the gesture's first capturePoint call) and reused for every later
+      // point of the SAME gesture -- see rigidAnchorRef's own comment.
+      if (!rigidAnchorRef.current) {
+        rigidAnchorRef.current = resolveRigidAnchor(event.clientX, event.clientY);
+      }
+      const anchor = rigidAnchorRef.current;
+      if (anchor) {
+        const liveEditor = anchor.kind === "pm-rigid" ? editorRef.current : (getChunkEditorRef.current?.(anchor.chunkId) ?? null);
+        if (liveEditor) {
+          try {
+            const coords = liveEditor.ctx.get(editorViewCtx).coordsAtPos(anchor.pos, -1);
+            const dx = event.clientX - coords.left;
+            const dy = event.clientY - coords.top;
+            return anchor.kind === "pm-rigid"
+              ? { kind: "pm-rigid", pos: anchor.pos, dx, dy }
+              : { kind: "pm-chunk-rigid", chunkId: anchor.chunkId, pos: anchor.pos, dx, dy };
+          } catch {
+            // Fall through to scroll-anchored below.
+          }
+        }
       }
     }
+    // "sketch" mode, or a "pin" resolution that failed (no live editor/chunk
+    // yet -- the startup window ModeHeader's `drawDisabled` already
+    // prevents in practice, but handled gracefully regardless).
     return { kind: "scroll", clientX: event.clientX, yDoc: event.clientY + getScrollTop() };
   }
 
@@ -294,7 +572,7 @@ export function DrawLayer({
   // but wrong result -- for a position sitting at the very end of a text
   // run with nothing meaningfully rendered after it (confirmed directly by
   // logging its raw return value during debugging, not assumed) -- exactly
-  // where `captureFromView`'s own end-of-document fallback lands, and
+  // where `resolveBlockAnchorPos`'s own end-of-document fallback lands, and
   // reproducible even well after the view has settled (not a layout-timing
   // race: waiting extra animation frames made no difference). `side: -1`
   // ("look at this position from what comes BEFORE it") measures from the
@@ -307,7 +585,8 @@ export function DrawLayer({
   // this point.
   function resolveClientPoint(point: StrokePoint, scrollTop: number): { clientX: number; clientY: number } | null {
     if (point.kind === "scroll") return { clientX: point.clientX, clientY: point.yDoc - scrollTop };
-    const liveEditor = point.kind === "pm" ? editorRef.current : (getChunkEditorRef.current?.(point.chunkId) ?? null);
+    const liveEditor =
+      point.kind === "pm" || point.kind === "pm-rigid" ? editorRef.current : (getChunkEditorRef.current?.(point.chunkId) ?? null);
     if (!liveEditor) return null;
     try {
       const coords = liveEditor.ctx.get(editorViewCtx).coordsAtPos(point.pos, -1);
@@ -317,11 +596,28 @@ export function DrawLayer({
     }
   }
 
-  function toCanvasPoints(points: StrokePoint[], scrollTop: number, canvasRect: DOMRect): { x: number; y: number }[] {
-    const result: { x: number; y: number }[] = [];
-    for (const point of points) {
-      const resolved = resolveClientPoint(point, scrollTop);
-      if (resolved) result.push({ x: resolved.clientX - canvasRect.left, y: resolved.clientY - canvasRect.top });
+  // `pressures`, when given, must be index-aligned with `points` (see
+  // `Stroke.pressures`'s own doc comment). Looked up by each point's
+  // ORIGINAL index, not by its position in the OUTPUT array -- a point
+  // that fails to resolve (`resolveClientPoint` returning null, e.g. its
+  // chunk isn't currently mounted) is skipped here, which would otherwise
+  // silently misalign a separately-tracked pressures array against the
+  // wrong points from then on. Carrying `pressure` alongside each
+  // resolved point instead avoids that entirely: whichever points DO
+  // resolve keep their own correct pressure value regardless of how many
+  // others were skipped.
+  function toCanvasPoints(
+    points: StrokePoint[],
+    scrollTop: number,
+    canvasRect: DOMRect,
+    pressures?: number[],
+  ): { x: number; y: number; pressure?: number }[] {
+    const result: { x: number; y: number; pressure?: number }[] = [];
+    for (let i = 0; i < points.length; i++) {
+      const resolved = resolveClientPoint(points[i]!, scrollTop);
+      if (resolved) {
+        result.push({ x: resolved.clientX - canvasRect.left, y: resolved.clientY - canvasRect.top, pressure: pressures?.[i] });
+      }
     }
     return result;
   }
@@ -368,6 +664,11 @@ export function DrawLayer({
   // committed baseline (see stopDrawing) -- without that, the NEXT stroke's
   // first `blitCommittedToVisible` call would restore a baseline missing
   // the previous one, visibly erasing it the instant a new stroke starts.
+  //
+  // Each stroke is filled as a perfect-freehand variable-width outline
+  // (strokeOutlineToPath2D), not stroked as a uniform-width polyline --
+  // `last: true` here since every stroke reaching this function is already
+  // complete (see handlePointerMove for the in-progress case).
   function redrawAll(scrollTop: number) {
     const canvas = canvasRef.current;
     const committed = getCommittedCanvas();
@@ -376,17 +677,12 @@ export function DrawLayer({
     const canvasRect = canvas.getBoundingClientRect();
     committedCtx.clearRect(0, 0, committed.width, committed.height);
     for (const stroke of strokesRef.current) {
-      const points = toCanvasPoints(stroke.points, scrollTop, canvasRect);
-      if (points.length === 0) continue;
-      committedCtx.strokeStyle = stroke.penStyle.color;
-      committedCtx.lineWidth = stroke.penStyle.width;
+      const points = toCanvasPoints(stroke.points, scrollTop, canvasRect, stroke.pressures);
+      const path = strokeOutlineToPath2D(points, stroke.penStyle, true);
+      if (!path) continue;
+      committedCtx.fillStyle = stroke.penStyle.color;
       committedCtx.globalAlpha = stroke.penStyle.opacity ?? 1;
-      committedCtx.lineCap = "round";
-      committedCtx.lineJoin = "round";
-      committedCtx.beginPath();
-      committedCtx.moveTo(points[0]!.x, points[0]!.y);
-      for (let i = 1; i < points.length; i++) committedCtx.lineTo(points[i]!.x, points[i]!.y);
-      committedCtx.stroke();
+      committedCtx.fill(path);
     }
     committedCtx.globalAlpha = 1;
     blitCommittedToVisible();
@@ -396,12 +692,16 @@ export function DrawLayer({
     return { color: penStyle.color, width: penStyle.width, opacity: penStyle.opacity };
   }
 
-  // Writes the CURRENT set of PM-anchored (single-instance) strokes back
-  // into the live document as ink data (see inkPersistence.ts) -- a no-op
-  // if `editor` is null or the schema doesn't have the `ink` node for some
-  // reason. Points of any other kind are silently excluded: only
-  // PM-anchored strokes persist here. Safe to call liberally -- writeInkData
-  // itself no-ops when nothing actually changed.
+  // Writes the CURRENT set of PM-anchored and PM-rigid (single-instance)
+  // strokes back into the live document as ink data (see inkPersistence.ts)
+  // -- a no-op if `editor` is null or the schema doesn't have the `ink` node
+  // for some reason. Points of any other kind are silently excluded: only
+  // these two persist here. `InkStroke.rigid` preserves which of the two a
+  // stroke was, so rehydration (below) can reconstruct the right kind --
+  // every point of a given stroke shares one kind in practice (capturePoint
+  // never mixes them within a gesture), so checking just the first point is
+  // sufficient. Safe to call liberally -- writeInkData itself no-ops when
+  // nothing actually changed.
   function syncInkSingle() {
     const liveEditor = editorRef.current;
     if (!liveEditor) return;
@@ -411,9 +711,14 @@ export function DrawLayer({
       if (!inkType) return;
       const strokes: InkStroke[] = [];
       for (const stroke of strokesRef.current) {
-        const points = stroke.points.filter((p): p is PmPoint => p.kind === "pm");
+        const points = stroke.points.filter((p): p is PmPoint | PmRigidPoint => p.kind === "pm" || p.kind === "pm-rigid");
         if (points.length === 0) continue;
-        strokes.push({ penStyle: toInkPenStyle(stroke.penStyle), points: points.map((p) => ({ pos: p.pos, dx: p.dx, dy: p.dy })) });
+        const rigid = points[0]!.kind === "pm-rigid";
+        strokes.push({
+          penStyle: toInkPenStyle(stroke.penStyle),
+          points: points.map((p) => ({ pos: p.pos, dx: p.dx, dy: p.dy })),
+          ...(rigid ? { rigid: true } : {}),
+        });
       }
       const data: InkData | null = strokes.length > 0 ? { v: 1, strokes } : null;
       if (writeInkData(view, inkType, data)) onInkPersisted();
@@ -423,11 +728,11 @@ export function DrawLayer({
     }
   }
 
-  // Chunked analogue of syncInkSingle: writes only the PM-chunk-anchored
-  // points belonging to ONE specific chunk into THAT chunk's own `ink`
-  // node (a no-op, including writing null to clear a stale node, if that
-  // chunk isn't currently mounted -- callers only ever invoke this while
-  // the relevant chunk IS mounted, since both stroke completion and
+  // Chunked analogue of syncInkSingle: writes only the PM-chunk-anchored and
+  // PM-chunk-rigid points belonging to ONE specific chunk into THAT chunk's
+  // own `ink` node (a no-op, including writing null to clear a stale node,
+  // if that chunk isn't currently mounted -- callers only ever invoke this
+  // while the relevant chunk IS mounted, since both stroke completion and
   // transaction-triggered pruning only ever happen in response to
   // something that chunk's own live view just did).
   function syncInkForChunk(chunkId: string) {
@@ -439,9 +744,16 @@ export function DrawLayer({
       if (!inkType) return;
       const strokes: InkStroke[] = [];
       for (const stroke of strokesRef.current) {
-        const points = stroke.points.filter((p): p is PmChunkPoint => p.kind === "pm-chunk" && p.chunkId === chunkId);
+        const points = stroke.points.filter(
+          (p): p is PmChunkPoint | PmChunkRigidPoint => (p.kind === "pm-chunk" || p.kind === "pm-chunk-rigid") && p.chunkId === chunkId,
+        );
         if (points.length === 0) continue;
-        strokes.push({ penStyle: toInkPenStyle(stroke.penStyle), points: points.map((p) => ({ pos: p.pos, dx: p.dx, dy: p.dy })) });
+        const rigid = points[0]!.kind === "pm-chunk-rigid";
+        strokes.push({
+          penStyle: toInkPenStyle(stroke.penStyle),
+          points: points.map((p) => ({ pos: p.pos, dx: p.dx, dy: p.dy })),
+          ...(rigid ? { rigid: true } : {}),
+        });
       }
       const data: InkData | null = strokes.length > 0 ? { v: 1, strokes } : null;
       if (writeInkData(view, inkType, data)) onChunkInkPersisted(chunkId);
@@ -606,7 +918,9 @@ export function DrawLayer({
       if (data) {
         strokesRef.current = data.strokes.map((stroke) => ({
           penStyle: { id: "restored", label: "Restored", color: stroke.penStyle.color, width: stroke.penStyle.width, opacity: stroke.penStyle.opacity },
-          points: stroke.points.map((p): PmPoint => ({ kind: "pm", pos: p.pos, dx: p.dx, dy: p.dy })),
+          points: stroke.points.map((p): PmPoint | PmRigidPoint =>
+            stroke.rigid ? { kind: "pm-rigid", pos: p.pos, dx: p.dx, dy: p.dy } : { kind: "pm", pos: p.pos, dx: p.dx, dy: p.dy },
+          ),
         }));
         redrawAll(getScrollTop());
       }
@@ -626,7 +940,7 @@ export function DrawLayer({
       for (const stroke of strokesRef.current) {
         for (let i = stroke.points.length - 1; i >= 0; i--) {
           const point = stroke.points[i]!;
-          if (point.kind !== "pm") continue;
+          if (point.kind !== "pm" && point.kind !== "pm-rigid") continue;
           const result = tr.mapping.mapResult(point.pos);
           if (result.deleted) {
             stroke.points.splice(i, 1);
@@ -684,14 +998,18 @@ export function DrawLayer({
       try {
         const data = readInkData(chunkEditor.ctx.get(editorViewCtx).state.doc, chunkEditor.ctx.get(schemaCtx).nodes.ink!);
         for (const stroke of strokesRef.current) {
-          stroke.points = stroke.points.filter((p) => !(p.kind === "pm-chunk" && p.chunkId === chunkId));
+          stroke.points = stroke.points.filter((p) => !((p.kind === "pm-chunk" || p.kind === "pm-chunk-rigid") && p.chunkId === chunkId));
         }
         strokesRef.current = strokesRef.current.filter((stroke) => stroke.points.length > 0);
         if (data) {
           for (const stroke of data.strokes) {
             strokesRef.current.push({
               penStyle: { id: "restored", label: "Restored", color: stroke.penStyle.color, width: stroke.penStyle.width, opacity: stroke.penStyle.opacity },
-              points: stroke.points.map((p): PmChunkPoint => ({ kind: "pm-chunk", chunkId, pos: p.pos, dx: p.dx, dy: p.dy })),
+              points: stroke.points.map((p): PmChunkPoint | PmChunkRigidPoint =>
+                stroke.rigid
+                  ? { kind: "pm-chunk-rigid", chunkId, pos: p.pos, dx: p.dx, dy: p.dy }
+                  : { kind: "pm-chunk", chunkId, pos: p.pos, dx: p.dx, dy: p.dy },
+              ),
             });
           }
         }
@@ -718,7 +1036,7 @@ export function DrawLayer({
       for (const stroke of strokesRef.current) {
         for (let i = stroke.points.length - 1; i >= 0; i--) {
           const point = stroke.points[i]!;
-          if (point.kind !== "pm-chunk" || point.chunkId !== chunkId) continue;
+          if ((point.kind !== "pm-chunk" && point.kind !== "pm-chunk-rigid") || point.chunkId !== chunkId) continue;
           const result = tr.mapping.mapResult(point.pos);
           if (result.deleted) {
             stroke.points.splice(i, 1);
@@ -748,8 +1066,55 @@ export function DrawLayer({
   }, [getChunkEditor]);
 
   function handlePointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
-    event.currentTarget.setPointerCapture(event.pointerId);
+    // Two reasons this can fire when a stroke is ALREADY in progress, both
+    // of which must be ignored rather than re-initializing the gesture:
+    // (1) already panning (a touchmove already detected 2+ fingers) -- a
+    // third finger touching down shouldn't start a new draw gesture; (2)
+    // confirmed directly, not assumed: a SECOND finger's own `touchStart`
+    // can make the browser re-fire `pointerdown` for the FIRST finger's
+    // pointerId too, even though it was already down and drawing -- a
+    // real Chromium touch-to-pointer-event translation quirk, not a
+    // theoretical one (reproduced via CDP's Input.dispatchTouchEvent).
+    // Since `isPanningRef` isn't set yet at that exact moment (that only
+    // happens once handleTouchMove's own multi-touch check runs, slightly
+    // LATER), that guard alone doesn't catch this -- without the
+    // `drawingRef.current` check too, this re-fire would stomp
+    // `pointsRef`/`gestureStartTimeRef` with a fresh single-point gesture,
+    // destroying whatever had actually been drawn AND corrupting the
+    // grace-period elapsed-time calculation (resetting it to "just now"),
+    // which then incorrectly DISCARDED the real stroke entirely instead of
+    // committing it.
+    if (isPanningRef.current || drawingRef.current) return;
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Best-effort: setPointerCapture throws (NotFoundError) if the UA
+      // doesn't currently consider this pointerId "active" -- a real,
+      // if rare, edge case (e.g. racing an OS-level gesture interruption),
+      // not just a theoretical one. Capture is a nice-to-have (keeps the
+      // gesture routed to this canvas even if the pointer strays outside
+      // it mid-stroke); the drawing gesture itself works fine without it,
+      // so this shouldn't abort the rest of handlePointerDown.
+    }
     drawingRef.current = true;
+    // Fresh anchor for this new gesture -- "pin" mode's capturePoint only
+    // resolves a new one when this is null, so every later point of THIS
+    // gesture reuses whatever the first point resolves below.
+    rigidAnchorRef.current = null;
+    // Baseline for this gesture's own sample-rate throttle (see
+    // SAMPLE_INTERVAL_MS) -- NOT left at whatever the previous gesture set
+    // it to.
+    lastSampleTimeRef.current = event.timeStamp;
+    // Separate from lastSampleTimeRef (which gets overwritten by every
+    // later move, for throttling) -- this stays fixed at the gesture's own
+    // start, so handleTouchMove can tell "did a second finger join almost
+    // immediately" from "this was already a real, ongoing single-finger
+    // stroke" (see TWO_FINGER_GRACE_MS's own comment).
+    gestureStartTimeRef.current = event.timeStamp;
+    // Real pressure tracking only for an actual electronic pen/stylus --
+    // decided once per gesture (see pressuresRef's own comment).
+    pressuresRef.current = event.pointerType === "pen" ? [event.pressure] : null;
     // No snapshot to capture here anymore -- the committed canvas is
     // already kept continuously in sync by redrawAll, so it's always a
     // valid baseline to blit from on the very first move of a new stroke.
@@ -757,35 +1122,49 @@ export function DrawLayer({
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
+    // Panning (2+ fingers, driven by handleTouchMove's own TouchEvent-based
+    // tracking) takes over entirely -- skip drawing until every finger lifts.
+    if (isPanningRef.current) return;
+
     if (!drawingRef.current) return;
+    // Sample-rate throttle -- see SAMPLE_INTERVAL_MS's own comment. Skips
+    // BOTH capturing this point and redrawing for it entirely, rather than
+    // e.g. capturing every point but only redrawing once per interval --
+    // the extra points between samples wouldn't change the resulting
+    // perfect-freehand outline enough to matter at a 16ms cadence, and
+    // keeping them out of `pointsRef` is what actually keeps later
+    // `toCanvasPoints`/`getStroke` calls (both O(n) in this stroke's own
+    // point count) from paying for samples finer than the display can show.
+    if (event.timeStamp - lastSampleTimeRef.current < SAMPLE_INTERVAL_MS) return;
+    lastSampleTimeRef.current = event.timeStamp;
+
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
 
     pointsRef.current.push(capturePoint(event));
+    pressuresRef.current?.push(event.pressure);
     // GPU-backed blit of the committed baseline, replacing the old
     // getImageData/putImageData pair -- see committedCanvasRef's own
     // comment for why.
     blitCommittedToVisible();
 
-    const points = toCanvasPoints(pointsRef.current, getScrollTop(), canvas.getBoundingClientRect());
-    if (points.length === 0) return;
+    const points = toCanvasPoints(pointsRef.current, getScrollTop(), canvas.getBoundingClientRect(), pressuresRef.current ?? undefined);
+    // `last: false` -- this stroke isn't finished yet (more points may
+    // still arrive), so perfect-freehand shouldn't taper/cap its end the
+    // way it will once stopDrawing's own redrawAll call passes `last: true`.
+    const path = strokeOutlineToPath2D(points, penStyle, false);
+    if (!path) return;
 
-    ctx.strokeStyle = penStyle.color;
-    ctx.lineWidth = penStyle.width;
+    ctx.fillStyle = penStyle.color;
     ctx.globalAlpha = penStyle.opacity ?? 1;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(points[0]!.x, points[0]!.y);
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i]!.x, points[i]!.y);
-    ctx.stroke();
+    ctx.fill(path);
     ctx.globalAlpha = 1;
   }
 
   function stopDrawing() {
     if (drawingRef.current && pointsRef.current.length > 0) {
-      strokesRef.current.push({ points: pointsRef.current, penStyle });
+      strokesRef.current.push({ points: pointsRef.current, penStyle, pressures: pressuresRef.current ?? undefined });
       if (editorRef.current) {
         syncInkSingle();
       } else {
@@ -793,7 +1172,11 @@ export function DrawLayer({
         // anchoring is available doesn't change mid-gesture), but this
         // iterates distinct chunk ids defensively rather than assuming
         // exactly one, in case a stroke ever does span a chunk boundary.
-        const chunkIds = new Set(pointsRef.current.filter((p): p is PmChunkPoint => p.kind === "pm-chunk").map((p) => p.chunkId));
+        const chunkIds = new Set(
+          pointsRef.current
+            .filter((p): p is PmChunkPoint | PmChunkRigidPoint => p.kind === "pm-chunk" || p.kind === "pm-chunk-rigid")
+            .map((p) => p.chunkId),
+        );
         for (const chunkId of chunkIds) syncInkForChunk(chunkId);
       }
       // Folds the just-finished stroke into the committed baseline -- see
@@ -802,6 +1185,39 @@ export function DrawLayer({
     }
     drawingRef.current = false;
     pointsRef.current = [];
+    rigidAnchorRef.current = null;
+    pressuresRef.current = null;
+  }
+
+  // handleTouchMove's "a second finger joined almost immediately" case --
+  // see TWO_FINGER_GRACE_MS's own comment. Same reset as stopDrawing's own
+  // tail, but WITHOUT committing `pointsRef` into `strokesRef` first: the
+  // brief touch-and-slight-move is incidental, not an intentional stroke.
+  // `redrawAll` still has to run -- handlePointerMove's in-progress
+  // rendering paints directly onto the VISIBLE canvas (not yet part of
+  // `strokesRef`), so without this, that stray mark would stay on screen
+  // even though it was never committed; redrawing from `strokesRef` (which
+  // never included it) correctly erases it.
+  function discardDrawing() {
+    drawingRef.current = false;
+    pointsRef.current = [];
+    rigidAnchorRef.current = null;
+    pressuresRef.current = null;
+    redrawAll(getScrollTop());
+  }
+
+  // Wraps stopDrawing for pointerup/cancel/leave -- skips it entirely
+  // while panning (nothing to stop; exiting panning itself is
+  // handleTouchEnd's own job, driven by TouchEvent.touches, not this
+  // pointer-based handler), otherwise falls through to the normal
+  // end-of-stroke handling.
+  function handlePointerEnd() {
+    // While panning, there's no draw gesture to stop (drawingRef was
+    // already cleared when panning started) -- actually exiting panning
+    // is handleTouchEnd's own job, driven by TouchEvent.touches, not this
+    // pointer-based handler.
+    if (isPanningRef.current) return;
+    stopDrawing();
   }
 
   function clear() {
@@ -810,7 +1226,11 @@ export function DrawLayer({
     // ink node; a chunk with no tracked strokes here has nothing to clear
     // (either it never had ink, or it's not currently mounted and this
     // session never rehydrated/wrote anything for it).
-    const chunkIds = new Set(strokesRef.current.flatMap((s) => s.points.filter((p): p is PmChunkPoint => p.kind === "pm-chunk").map((p) => p.chunkId)));
+    const chunkIds = new Set(
+      strokesRef.current.flatMap((s) =>
+        s.points.filter((p): p is PmChunkPoint | PmChunkRigidPoint => p.kind === "pm-chunk" || p.kind === "pm-chunk-rigid").map((p) => p.chunkId),
+      ),
+    );
     const hadSingle = !!editorRef.current;
     strokesRef.current = [];
     // Clears both the committed and visible canvases (0 strokes to redraw),
@@ -829,9 +1249,12 @@ export function DrawLayer({
         className="draw-layer-canvas"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
-        onPointerUp={stopDrawing}
-        onPointerCancel={stopDrawing}
-        onPointerLeave={stopDrawing}
+        onPointerUp={handlePointerEnd}
+        onPointerCancel={handlePointerEnd}
+        onPointerLeave={handlePointerEnd}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
       />
       {active && (
         <div className="draw-layer-controls">

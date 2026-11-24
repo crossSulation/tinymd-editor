@@ -18,6 +18,7 @@ import { renderLatexPreview } from "./latexPreview";
 import { createPlaceholderPlugin } from "./placeholder";
 import { createClickPastEndPlugin } from "./clickPastEnd";
 import { createCodeBlockExitKeymap } from "./codeBlockExitKeymap";
+import { createCodeBlockLongPressPlugin } from "./codeBlockLongPress";
 import { textColorMarkSchema, textColorRemark } from "./textColor";
 import { videoNodeSchema, videoNodeView, audioNodeSchema, audioNodeView, mediaEmbedRemark } from "./mediaEmbed";
 import { underlineMarkSchema, underlineRemark } from "./underline";
@@ -135,5 +136,6 @@ export function buildMilkdownEditor(opts: BuildMilkdownEditorOptions): MilkdownE
     .use(inkNodeSchema)
     .use(inkRemark)
     .use(createPlaceholderPlugin(placeholder))
-    .use(createClickPastEndPlugin());
+    .use(createClickPastEndPlugin())
+    .use(createCodeBlockLongPressPlugin());
 }

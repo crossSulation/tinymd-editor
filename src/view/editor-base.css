@@ -35,7 +35,6 @@
   flex: 1 1 auto;
   min-height: 0;
   padding: 0.75rem;
-  padding-bottom: calc(44px + 1.5rem); /* static room for the toolbar row */
   /* --keyboard-inset (set inline by Editor.tsx from useKeyboardInset): shrinks
      this flex item's own rendered height, which -- now that .milkdown
      actually flexes to fill it -- correctly shrinks .milkdown's box too, so
@@ -46,6 +45,22 @@
      any ancestor's own on-screen box. */
   margin-bottom: var(--keyboard-inset, 0px);
   font-family: Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Static room for the bottom Toolbar row -- only reserved while the
+   keyboard is actually open (`data-keyboard-open`, set by Editor.tsx from
+   the same `keyboardInset > 0` check Toolbar.tsx's own `visible` gate
+   primarily depends on), not unconditionally. Previously this padding-bottom
+   was always applied regardless of whether the keyboard (and therefore the
+   toolbar) was actually showing -- wasting ~68px of vertical content space
+   any time the keyboard was closed (reading/scrolling, Draw mode, where the
+   toolbar never renders at all). Known, accepted narrowing: Toolbar.tsx can
+   also show without the keyboard open (a selected image/video/audio node,
+   or an explicitly opened group panel) -- those rarer cases don't get this
+   reserved clearance, since Toolbar's own activeGroup/selectedMediaType
+   state isn't exposed outside that component to gate on here too. */
+.editor-mount[data-keyboard-open] {
+  padding-bottom: calc(44px + 1.5rem);
 }
 
 .editor-mount .ProseMirror {

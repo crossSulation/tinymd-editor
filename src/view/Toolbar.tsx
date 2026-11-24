@@ -21,14 +21,28 @@ const FALLBACK_PANEL_HEIGHT = 280;
 // (confirmed against @milkdown/components' NodeView source) and is still a
 // descendant of view.dom regardless of which CodeMirror internals end up
 // focused, so a view.dom-scoped focusin/focusout listener reliably tracks it.
-function useToolbarSuppressed(view: EditorView): boolean {
-  const [suppressed, setSuppressed] = useState(false);
+function useToolbarSuppressed(view: EditorView, selection: EditorState["selection"]): boolean {
+  // Tracks ONLY whether DOM focus geometrically sits inside a code block --
+  // purely a function of focus events, with no opinion on selection type.
+  // The final suppression decision below combines this with `selection`
+  // (read fresh from the component's own render-time `state` on every
+  // render, not cached here), since a long-press-selected code block (a
+  // NodeSelection -- see codeBlockLongPress.ts) can change `state.selection`
+  // WITHOUT any new focus event firing at all: the NodeView's own
+  // `selectNode()` lifecycle method calls `this.cm.focus()` (confirmed
+  // directly against @milkdown/components' source), which is a no-op --
+  // no new `focusin` -- if the user long-presses a code block they were
+  // ALREADY editing inside (CodeMirror already had focus). Relying on
+  // focus events alone left `suppressed` stuck at its previous (correctly
+  // suppressed, since they'd been typing) value in exactly that case,
+  // hiding the Delete button the long-press exists to surface.
+  const [focusInsideCodeBlock, setFocusInsideCodeBlock] = useState(false);
 
   useEffect(() => {
     const dom = view.dom;
     const update = () => {
       const active = document.activeElement;
-      setSuppressed(!!active && dom.contains(active) && !!active.closest(".milkdown-code-block"));
+      setFocusInsideCodeBlock(!!active && dom.contains(active) && !!active.closest(".milkdown-code-block"));
     };
     update();
     dom.addEventListener("focusin", update);
@@ -39,7 +53,7 @@ function useToolbarSuppressed(view: EditorView): boolean {
     };
   }, [view]);
 
-  return suppressed;
+  return focusInsideCodeBlock && !(selection instanceof NodeSelection);
 }
 
 export interface ToolbarProps {
@@ -127,7 +141,7 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
   const schema = editor.ctx.get(schemaCtx);
   const state = view.state;
   const keyboardInset = useKeyboardInset();
-  const toolbarSuppressed = useToolbarSuppressed(view);
+  const toolbarSuppressed = useToolbarSuppressed(view, state.selection);
   const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
   const [panelHeight, setPanelHeight] = useState(FALLBACK_PANEL_HEIGHT);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
@@ -275,9 +289,20 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
   // priority over the default row but not over an explicitly opened group
   // panel (selecting media while a panel happens to be open is not a normal
   // flow, but if it occurs, the panel the user deliberately opened wins).
+  //
+  // `code_block` rides this exact same mechanism (same contextual bar,
+  // Delete only -- no Preview, same as video/audio below) even though it
+  // reaches a NodeSelection a completely different way: a code block has
+  // its own embedded CodeMirror NodeView whose `stopEvent()` always returns
+  // `true` (confirmed directly against @milkdown/components' source),
+  // meaning an ordinary tap can never produce a NodeSelection on it the
+  // way tapping an atom image/video/audio node already does -- there was
+  // no way to select, and therefore no way to delete, a code block at all
+  // before this. codeBlockLongPress.ts's long-press gesture is what
+  // produces the NodeSelection here; this file doesn't need to know how.
   const mediaSelection = state.selection instanceof NodeSelection ? state.selection : null;
   const selectedMediaType =
-    mediaSelection && [schema.nodes.image, schema.nodes.video, schema.nodes.audio].includes(mediaSelection.node.type)
+    mediaSelection && [schema.nodes.image, schema.nodes.video, schema.nodes.audio, schema.nodes.code_block].includes(mediaSelection.node.type)
       ? mediaSelection.node.type
       : null;
 
