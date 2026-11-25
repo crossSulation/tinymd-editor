@@ -228,6 +228,14 @@
   text-align: left;
 }
 
+/* Client-side-only cosmetic toggle (tableCosmetics.ts) -- no markdown/GFM
+   syntax exists for a header column at all, so this reverts to plain on
+   reload rather than being persisted. */
+.editor-mount .table-cosmetic-header-column {
+  background: #f6f8fa;
+  font-weight: 600;
+}
+
 /* Images previously rendered at their raw pixel dimensions (the image node's
    own toDOM sets no size at all) -- a phone-camera photo could be thousands
    of pixels wide, dwarfing the editor's own content width. Capped to a
@@ -254,4 +262,59 @@
 .editor-mount video {
   border-radius: 4px;
   background: #000;
+}
+
+/* Callout (callout.ts) -- always "note" styling for now, no type-switcher
+   UI built yet (see that file's own comment). */
+.editor-mount .callout {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: #e8f0fe;
+}
+
+.editor-mount .callout-icon {
+  flex: none;
+  line-height: 1.4;
+}
+
+.editor-mount .callout-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.editor-mount .callout-body > *:first-child {
+  margin-top: 0;
+}
+
+.editor-mount .callout-body > *:last-child {
+  margin-bottom: 0;
+}
+
+/* Toggle list (toggleList.ts) -- native <details>/<summary>, collapse/
+   expand handled entirely by the browser, no JS needed. */
+.editor-mount .toggle-list {
+  margin: 0.5rem 0;
+}
+
+.editor-mount .toggle-summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.editor-mount .toggle-body {
+  padding: 0.25rem 0 0.25rem 1.25rem;
+}
+
+.editor-mount .toggle-body > *:first-child {
+  margin-top: 0;
+}
+
+.editor-mount .toggle-body > *:last-child {
+  margin-bottom: 0;
 }

@@ -19,11 +19,15 @@ import { createPlaceholderPlugin } from "./placeholder";
 import { createClickPastEndPlugin } from "./clickPastEnd";
 import { createCodeBlockExitKeymap } from "./codeBlockExitKeymap";
 import { createCodeBlockLongPressPlugin } from "./codeBlockLongPress";
+import { codeWrapCompartment, wrapExtension } from "./codeBlockWrap";
 import { textColorMarkSchema, textColorRemark } from "./textColor";
 import { videoNodeSchema, videoNodeView, audioNodeSchema, audioNodeView, mediaEmbedRemark } from "./mediaEmbed";
 import { underlineMarkSchema, underlineRemark } from "./underline";
 import { inkNodeSchema, inkRemark } from "./inkPersistence";
 import { createDirtyPlugin } from "./dirtyPlugin";
+import { createTableCosmeticsPlugin } from "./tableCosmetics";
+import { calloutNodeSchema, calloutRemark } from "./callout";
+import { toggleListNodeSchema, toggleListNodeView, toggleSummaryNodeSchema, toggleBodyNodeSchema, toggleListRemark } from "./toggleList";
 
 export interface BuildMilkdownEditorOptions {
   mount: HTMLElement;
@@ -110,7 +114,7 @@ export function buildMilkdownEditor(opts: BuildMilkdownEditorOptions): MilkdownE
       ctx.update(codeBlockConfig.key, (prev) => ({
         ...prev,
         languages: [...languages, mermaidLanguage],
-        extensions: [keymap.of(defaultKeymap.concat(indentWithTab)), basicSetup, createCodeBlockExitKeymap(ctx)],
+        extensions: [keymap.of(defaultKeymap.concat(indentWithTab)), basicSetup, createCodeBlockExitKeymap(ctx), codeWrapCompartment.of(wrapExtension(false))],
         renderPreview: (language, content, applyPreview) => {
           const mermaid = renderMermaidPreview(language, content, applyPreview);
           return mermaid !== null ? mermaid : renderLatexPreview(language, content);
@@ -135,7 +139,15 @@ export function buildMilkdownEditor(opts: BuildMilkdownEditorOptions): MilkdownE
     .use(mediaEmbedRemark)
     .use(inkNodeSchema)
     .use(inkRemark)
+    .use(calloutNodeSchema)
+    .use(calloutRemark)
+    .use(toggleListNodeSchema)
+    .use(toggleListNodeView)
+    .use(toggleSummaryNodeSchema)
+    .use(toggleBodyNodeSchema)
+    .use(toggleListRemark)
     .use(createPlaceholderPlugin(placeholder))
     .use(createClickPastEndPlugin())
-    .use(createCodeBlockLongPressPlugin());
+    .use(createCodeBlockLongPressPlugin())
+    .use(createTableCosmeticsPlugin());
 }

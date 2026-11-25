@@ -13,6 +13,9 @@ import {
   TableMap,
   CellSelection,
   mergeCells,
+  setCellAttr,
+  moveTableRow,
+  moveTableColumn,
 } from "@milkdown/kit/prose/tables";
 
 // toggleHeaderRow/toggleHeaderColumn (prosemirror-tables' generic commands)
@@ -60,6 +63,115 @@ function tableRowInfo(state: Parameters<Command>[0]): { map: InstanceType<typeof
   return { map, row: rect.top };
 }
 
+function tableColInfo(state: Parameters<Command>[0]): { map: InstanceType<typeof TableMap>; col: number } | null {
+  if (!isInTable(state)) return null;
+  const $cell: ResolvedPos = selectionCell(state);
+  const table = $cell.node(-1);
+  const tableStart = $cell.start(-1);
+  const map = TableMap.get(table);
+  const relPos = $cell.pos - tableStart;
+  const rect = map.findCell(relPos);
+  return { map, col: rect.left };
+}
+
+// moveTableRow/moveTableColumn (prosemirror-tables) swap CONTENT between
+// row/column "slots" while each slot keeps its own existing node type
+// (verified directly against its source: convertArrayOfRowsToTableNode uses
+// `oldRow.type.createChecked(...)`/`oldCell.type.createChecked(...)`, the
+// type at each position, not the type of whatever moved there) -- so moving
+// the mandatory header row wouldn't corrupt the schema, but it WOULD
+// silently reassign header styling to whatever body row's content got
+// swapped into that slot, which is confusing rather than useful. Guarded
+// out the same way insertRowAbove/deleteRow already guard row 0 above:
+// row reorder only ever applies among body rows.
+function moveRowUp(): Command {
+  return (state, dispatch) => {
+    const info = tableRowInfo(state);
+    if (!info || info.row <= 1) return false;
+    return moveTableRow({ from: info.row, to: info.row - 1 })(state, dispatch);
+  };
+}
+
+function moveRowDown(): Command {
+  return (state, dispatch) => {
+    const info = tableRowInfo(state);
+    if (!info || info.row === 0 || info.row >= info.map.height - 1) return false;
+    return moveTableRow({ from: info.row, to: info.row + 1 })(state, dispatch);
+  };
+}
+
+// No header-row-style guard needed for columns -- every column is a plain
+// table_cell/table_header pair, none structurally mandatory the way row 0 is.
+function moveColumnLeft(): Command {
+  return (state, dispatch) => {
+    const info = tableColInfo(state);
+    if (!info || info.col <= 0) return false;
+    return moveTableColumn({ from: info.col, to: info.col - 1 })(state, dispatch);
+  };
+}
+
+function moveColumnRight(): Command {
+  return (state, dispatch) => {
+    const info = tableColInfo(state);
+    if (!info || info.col >= info.map.width - 1) return false;
+    return moveTableColumn({ from: info.col, to: info.col + 1 })(state, dispatch);
+  };
+}
+
+// setCellAttr only touches the current CellSelection (or the single focused
+// cell with no CellSelection) -- building a column-spanning CellSelection
+// first (same technique combineWithNeighbor below uses for a 2-cell one)
+// lets one setCellAttr call re-align every cell in the column at once.
+function setColumnAlign(alignment: "left" | "center" | "right"): Command {
+  return (state, dispatch) => {
+    const info = tableColInfo(state);
+    if (!info) return false;
+    if (!dispatch) return true; // applicability-only check -- see combineWithNeighbor's own comment on why this must stop here
+    const $cell = selectionCell(state);
+    const table = $cell.node(-1);
+    const tableStart = $cell.start(-1);
+    const { map, col } = info;
+    const $first = state.doc.resolve(tableStart + map.positionAt(0, col, table));
+    const $last = state.doc.resolve(tableStart + map.positionAt(map.height - 1, col, table));
+    const intermediateState = state.apply(state.tr.setSelection(CellSelection.colSelection($last, $first)));
+    return setCellAttr("alignment", alignment)(intermediateState, dispatch);
+  };
+}
+
+// Sorts the table's body rows (never the mandatory header row) ascending by
+// the current column's own text content. Assumes no rowspans across that
+// column -- true for every table this app's own UI can currently produce
+// (insert/merge only ever merges horizontally via combineWithNeighbor's
+// "vert" axis... actually combineDown does create a rowspan, so a sort
+// across a column containing a vertically-merged cell can reorder its
+// anchor away from the rows it spans; accepted as a known edge case rather
+// than reconciling spans here, same spirit as the resize gap already
+// documented for this table UI.
+function sortColumnAscending(): Command {
+  return (state, dispatch) => {
+    const info = tableColInfo(state);
+    if (!info) return false;
+    const $cell = selectionCell(state);
+    const table = $cell.node(-1);
+    const tableStart = $cell.start(-1);
+    const tablePos = tableStart - 1;
+    const { map, col } = info;
+    const bodyRows: { node: typeof table; text: string }[] = [];
+    for (let row = 1; row < map.height; row++) {
+      const rowNode = table.child(row);
+      const cellPos = map.positionAt(row, col, table);
+      const cellNode = table.nodeAt(cellPos);
+      bodyRows.push({ node: rowNode, text: cellNode?.textContent ?? "" });
+    }
+    const sorted = [...bodyRows].sort((a, b) => a.text.localeCompare(b.text));
+    if (sorted.every((entry, i) => entry.node === bodyRows[i]!.node)) return false; // already sorted
+    if (!dispatch) return true;
+    const newTable = table.type.createChecked(table.attrs, [table.child(0), ...sorted.map((entry) => entry.node)], table.marks);
+    dispatch(state.tr.replaceWith(tablePos, tablePos + table.nodeSize, newTable));
+    return true;
+  };
+}
+
 function insertRowAbove(): Command {
   return (state, dispatch) => {
     const info = tableRowInfo(state);
@@ -91,6 +203,12 @@ export interface TableCommands {
   combineRight: Command;
   combineDown: Command;
   splitCell: Command;
+  moveRowUp: Command;
+  moveRowDown: Command;
+  moveColumnLeft: Command;
+  moveColumnRight: Command;
+  setColumnAlign: (alignment: "left" | "center" | "right") => Command;
+  sortColumnAscending: Command;
 }
 
 // "Combine Row"/"Combine Column": merges the focused cell with its immediate
@@ -168,5 +286,11 @@ export function createTableCommands(): TableCommands {
     combineRight: combineWithNeighbor("horiz"),
     combineDown: combineWithNeighbor("vert"),
     splitCell,
+    moveRowUp: moveRowUp(),
+    moveRowDown: moveRowDown(),
+    moveColumnLeft: moveColumnLeft(),
+    moveColumnRight: moveColumnRight(),
+    setColumnAlign,
+    sortColumnAscending: sortColumnAscending(),
   };
 }

@@ -1,0 +1,169 @@
+/* Web/desktop only (see Editor.tsx's SLASH_MENU_AVAILABLE) -- a floating
+   dropdown, not the mobile bottom-action-sheet treatment the code-block
+   language picker uses, since this never renders on a touch-only platform.
+
+   SlashProvider sets left/top directly on `.slash-menu-root` (SlashMenu.tsx's
+   portal target) via floating-ui -- same precedent as the code-block
+   language picker (code-block-layout.css: floating-ui repositions THAT
+   outer wrapper, not its inner visible box). position: fixed has to live
+   on this SAME element, not on `.slash-menu-panel` below -- confirmed
+   directly as a real bug: left/top on a position:static element are
+   no-ops, so the menu rendered wherever it happened to land in normal
+   document flow instead of anywhere near the caret. */
+.slash-menu-root {
+  position: fixed;
+  z-index: 30;
+}
+
+.slash-menu-root[data-show="false"] {
+  display: none;
+}
+
+/* Structure/layout follows the Claude Design "Insert menu (/)" artboard
+   (filter row + grouped icon-tile grid + hint shortcuts + highlighted
+   first match) -- narrower than that artboard's own 700px (sized for a
+   1194px tablet canvas) since this floats near a text cursor in an
+   ordinary desktop window. */
+.slash-menu-panel {
+  display: flex;
+  flex-direction: column;
+  width: 640px;
+  max-height: 420px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+  padding: 8px;
+  font-size: 15px;
+}
+
+.slash-menu-filter {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: #f4f5f7;
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.slash-menu-search-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.slash-menu-filter-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1c1f24;
+}
+
+.slash-menu-filter-hint {
+  flex: none;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.slash-menu-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.slash-menu-empty {
+  padding: 28px 12px;
+  text-align: center;
+  font-size: 15px;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.slash-menu-group {
+  padding-top: 6px;
+}
+
+.slash-menu-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.45);
+  padding: 4px 10px;
+}
+
+.slash-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.slash-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  min-height: 44px;
+  padding: 0 8px 0 6px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: #1c1f24;
+  cursor: pointer;
+}
+
+.slash-menu-item[data-highlighted] {
+  background: rgba(25, 118, 210, 0.12);
+}
+
+.slash-menu-tile {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.slash-menu-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.slash-menu-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.slash-menu-item-hint {
+  flex: none;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}

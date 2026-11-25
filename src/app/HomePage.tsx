@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauriAndroid } from "../view/platform";
 import { createDoc, deleteDoc, listDocs, loadDoc, saveDoc } from "../control";
 import type { DocSummary } from "../control";
 import { touch } from "../model";
@@ -8,15 +8,18 @@ import { NewDocumentModal, type NewDocumentFields } from "./NewDocumentModal";
 import "./home-page.css";
 
 // Export is a browser-download primitive (Blob + `<a download>`), which
-// Android's System WebView (what Tauri wraps) doesn't support at all --
+// Android's System WebView specifically doesn't support at all --
 // confirmed against a still-open upstream Tauri issue, not something this
 // app's own code can paper over without real native Rust/Kotlin work (the
 // "proper" Tauri-documented alternative, plugin-dialog + plugin-fs, also has
 // its own open upstream bug producing 0-byte files on Android). Hidden
-// outright on Tauri rather than left visible-but-silently-broken -- same
-// "no ambiguous state" reasoning as ModeHeader.tsx's `drawDisabled` gate.
-// Revisit only if a reliable native path becomes available upstream.
-const exportAvailable = !isTauri();
+// outright on the Android build rather than left visible-but-silently-broken
+// -- same "no ambiguous state" reasoning as ModeHeader.tsx's `drawDisabled`
+// gate. Checked against isTauriAndroid(), not plain isTauri(): a desktop
+// Tauri build (Windows/macOS/Linux, used for local testing) has a real
+// desktop webview, which doesn't share this limitation at all. Revisit
+// only if a reliable native path becomes available upstream.
+const exportAvailable = !isTauriAndroid();
 
 export interface HomePageProps {
   onOpenDoc: (docId: string) => void;

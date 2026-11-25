@@ -6,8 +6,11 @@ import type { Editor } from "@milkdown/kit/core";
 import { editorViewCtx, schemaCtx } from "@milkdown/kit/core";
 import { isMarkActive, isNodeActive, type EditorCommands } from "./commands";
 import { insertMermaidBlock } from "./mermaidPreview";
+import { insertLatexBlock } from "./latexPreview";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { TEXT_COLORS, isTextColorActive } from "./textColor";
+import { applyCodeWrapToAll } from "./codeBlockWrap";
+import { CELL_COLORS, toggleHeaderColumn, setCellColor, fillColumnColor } from "./tableCosmetics";
 
 // Best-guess group-panel height for the very first open, before any real
 // keyboard height has been observed on this device (e.g. the editor was
@@ -145,6 +148,10 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
   const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
   const [panelHeight, setPanelHeight] = useState(FALLBACK_PANEL_HEIGHT);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  // Document-wide, not per-code-block -- see codeBlockWrap.ts for why a real
+  // per-block toggle (as the design shows) isn't buildable against
+  // @milkdown/components' fixed code-block template.
+  const [codeWrapEnabled, setCodeWrapEnabled] = useState(false);
 
   // Remember the last real keyboard height seen while it was actually open,
   // since by the time a group panel needs a height, blur() has already
@@ -159,6 +166,23 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
     return true;
   };
 
+  const insertLatex: Command = (_state, dispatch) => {
+    if (dispatch) insertLatexBlock(editor.ctx);
+    return true;
+  };
+
+  // Not a real ProseMirror command (nothing in the document changes) -- a
+  // plain Command shape just so this toggle fits the same ToolbarItem/
+  // ToolbarItemButton model as everything else in the Code row.
+  const toggleCodeWrap: Command = (_state, dispatch) => {
+    if (dispatch) {
+      const next = !codeWrapEnabled;
+      setCodeWrapEnabled(next);
+      applyCodeWrapToAll(view.dom, next);
+    }
+    return true;
+  };
+
   // Frequent, single-tap toggles -- kept directly on the toolbar row.
   const defaultItems: ToolbarItem[] = [
     { label: "B", title: "Bold", command: commands.toggleBold, isActive: (s) => isMarkActive(s, schema.marks.strong!) },
@@ -167,7 +191,6 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
     { label: "S", title: "Strikethrough", command: commands.toggleStrikethrough, isActive: (s) => isMarkActive(s, schema.marks.strike_through!) },
     { label: "U", title: "Underline", command: commands.toggleUnderline, isActive: (s) => isMarkActive(s, schema.marks.underline!) },
     { label: "🔗", title: "Link", command: commands.toggleLink, isActive: (s) => isMarkActive(s, schema.marks.link!) },
-    { label: "↶", title: "Undo", command: commands.undo },
     { label: "↷", title: "Redo", command: commands.redo },
   ];
 
@@ -190,6 +213,8 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
           items: [
             { label: "{ }", title: "Code block", command: commands.setCodeBlock, isActive: (s) => isNodeActive(s, schema.nodes.code_block!) },
             { label: "◇", title: "Mermaid diagram", command: insertMermaid },
+            { label: "∑", title: "LaTeX block", command: insertLatex },
+            { label: "Wrap", title: "Wrap long lines in code blocks", command: toggleCodeWrap, isActive: () => codeWrapEnabled },
           ],
         },
         {
@@ -197,6 +222,13 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
           items: [
             { label: "▦", title: "Insert table", command: commands.insertTable(editor.ctx, 3, 3) },
             { label: "—", title: "Horizontal rule", command: commands.insertHorizontalRule },
+          ],
+        },
+        {
+          label: "Blocks",
+          items: [
+            { label: "ℹ", title: "Callout", command: commands.insertCallout },
+            { label: "▸", title: "Toggle list", command: commands.insertToggleList },
           ],
         },
       ],
@@ -212,6 +244,8 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
             { label: "↑Row", title: "Insert row above", command: commands.insertRowAbove },
             { label: "↓Row", title: "Insert row below", command: commands.insertRowBelow },
             { label: "✕Row", title: "Delete row", command: commands.deleteRow },
+            { label: "Row▲", title: "Move row up", command: commands.moveRowUp },
+            { label: "Row▼", title: "Move row down", command: commands.moveRowDown },
           ],
         },
         {
@@ -220,6 +254,8 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
             { label: "←Col", title: "Insert column left", command: commands.insertColumnLeft },
             { label: "→Col", title: "Insert column right", command: commands.insertColumnRight },
             { label: "✕Col", title: "Delete column", command: commands.deleteColumn },
+            { label: "Col◀", title: "Move column left", command: commands.moveColumnLeft },
+            { label: "Col▶", title: "Move column right", command: commands.moveColumnRight },
           ],
         },
         {
@@ -229,6 +265,44 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
             { label: "Merge↓", title: "Combine with cell below", command: commands.combineDown },
             { label: "Split", title: "Split cell", command: commands.splitCell },
           ],
+        },
+        {
+          label: "Column format",
+          items: [
+            { label: "⯇", title: "Align column left", command: commands.setColumnAlign("left") },
+            { label: "☰", title: "Align column center", command: commands.setColumnAlign("center") },
+            { label: "⯈", title: "Align column right", command: commands.setColumnAlign("right") },
+            { label: "Sort", title: "Sort column A→Z", command: commands.sortColumnAscending },
+          ],
+        },
+        {
+          // Cosmetic-only, not persisted -- see tableCosmetics.ts.
+          label: "Cell color",
+          items: [
+            ...CELL_COLORS.map((option) => ({
+              label: option.label,
+              title: `Cell color: ${option.label}`,
+              command: setCellColor(option.color),
+              swatchColor: option.color,
+            })),
+            { label: "✕", title: "Clear cell color", command: setCellColor(null) },
+          ],
+        },
+        {
+          label: "Column fill",
+          items: [
+            ...CELL_COLORS.map((option) => ({
+              label: option.label,
+              title: `Fill column: ${option.label}`,
+              command: fillColumnColor(option.color),
+              swatchColor: option.color,
+            })),
+            { label: "✕", title: "Clear column fill", command: fillColumnColor(null) },
+          ],
+        },
+        {
+          label: "Header column",
+          items: [{ label: "Header col", title: "Toggle header-column style (not saved)", command: toggleHeaderColumn() }],
         },
       ],
     },
@@ -254,6 +328,8 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
             { label: "“”", title: "Blockquote", command: commands.toggleBlockquote, isActive: (s) => isNodeActive(s, schema.nodes.blockquote!) },
             { label: "•", title: "Bullet list", command: commands.toggleBulletList, isActive: (s) => isNodeActive(s, schema.nodes.bullet_list!) },
             { label: "1.", title: "Ordered list", command: commands.toggleOrderedList, isActive: (s) => isNodeActive(s, schema.nodes.ordered_list!) },
+            { label: "⯇⯇", title: "Outdent", command: commands.outdentListItem },
+            { label: "⯈⯈", title: "Indent", command: commands.indentListItem },
           ],
         },
       ],
@@ -401,8 +477,11 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
             ))}
           </div>
           {/* Pinned outside the scrollable row (not just appended to it) so
-              it's always reachable without scrolling -- some on-screen
-              keyboards have no dismiss/close key of their own. */}
+              Undo and Hide-keyboard are always reachable regardless of how
+              many items overflow -- some on-screen keyboards have no
+              dismiss/close key of their own, and Undo is frequent enough to
+              be worth never having to scroll for. */}
+          <ToolbarItemButton item={{ label: "↶", title: "Undo", command: commands.undo }} state={state} view={view} onApplied={() => view.focus()} />
           <button
             type="button"
             className="toolbar-button toolbar-dismiss-keyboard"

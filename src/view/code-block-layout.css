@@ -160,6 +160,34 @@
   font-size: 0.875rem;
 }
 
+.milkdown .milkdown-code-block .codemirror-host .cm-editor.cm-lineWrapping .cm-line {
+  overflow-wrap: anywhere;
+}
+
+/* Block-LaTeX equation numbering -- see latexPreview.ts for why this is
+   pure CSS rather than computed in JS. Reset once per Milkdown root (each
+   virtualized chunk is its own root, so each numbers its own equations
+   independently -- see that file's comment on why). */
+.milkdown {
+  counter-reset: latex-eq;
+}
+
+.milkdown .latex-eq-wrap {
+  position: relative;
+  counter-increment: latex-eq;
+  padding-right: 2.5rem;
+}
+
+.milkdown .latex-eq-wrap::after {
+  content: "(" counter(latex-eq) ")";
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.9rem;
+  color: rgba(0, 0, 0, 0.5);
+}
+
 /* Code + its rendered preview (e.g. a Mermaid diagram) side by side instead
    of stacked. Only applies when a preview panel actually exists in the DOM
    (Milkdown's PreviewPanel renders nothing for languages with no preview),

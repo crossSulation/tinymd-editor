@@ -1,7 +1,7 @@
 import type { Command, EditorState } from "prosemirror-state";
 import type { MarkType, NodeType, Schema } from "prosemirror-model";
 import { lift, setBlockType, toggleMark, wrapIn } from "@milkdown/kit/prose/commands";
-import { liftListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
+import { liftListItem, sinkListItem, wrapInList } from "@milkdown/kit/prose/schema-list";
 import { undo, redo } from "@milkdown/kit/prose/history";
 import type { Ctx } from "@milkdown/kit/ctx";
 import { createTable } from "@milkdown/kit/preset/gfm";
@@ -58,7 +58,11 @@ export interface EditorCommands extends TableCommands {
   toggleBlockquote: Command;
   toggleBulletList: Command;
   toggleOrderedList: Command;
+  outdentListItem: Command;
+  indentListItem: Command;
   insertHorizontalRule: Command;
+  insertCallout: Command;
+  insertToggleList: Command;
   insertTable: (ctx: Ctx, rows: number, cols: number) => Command;
   insertImage: Command;
   insertVideo: Command;
@@ -95,9 +99,33 @@ export function createCommands(schema: Schema): EditorCommands {
   const toggleBlockquote = toggleWrap(schema.nodes.blockquote!);
   const toggleBulletList = toggleList(schema.nodes.bullet_list!, schema.nodes.list_item!);
   const toggleOrderedList = toggleList(schema.nodes.ordered_list!, schema.nodes.list_item!);
+  // Same item type regardless of whether the cursor is in a bullet or
+  // ordered list -- liftListItem/sinkListItem only care about list_item.
+  const outdentListItem = liftListItem(schema.nodes.list_item!);
+  const indentListItem = sinkListItem(schema.nodes.list_item!);
 
   const insertHorizontalRule: Command = (state, dispatch) => {
     if (dispatch) dispatch(state.tr.replaceSelectionWith(schema.nodes.hr!.create()));
+    return true;
+  };
+
+  const insertCallout: Command = (state, dispatch) => {
+    if (dispatch) {
+      const paragraph = schema.nodes.paragraph!.createAndFill();
+      const callout = schema.nodes.callout!.create({ calloutType: "note" }, paragraph ?? undefined);
+      dispatch(state.tr.replaceSelectionWith(callout).scrollIntoView());
+    }
+    return true;
+  };
+
+  const insertToggleList: Command = (state, dispatch) => {
+    if (dispatch) {
+      const summary = schema.nodes.toggle_summary!.create();
+      const bodyParagraph = schema.nodes.paragraph!.createAndFill();
+      const body = schema.nodes.toggle_body!.create(null, bodyParagraph ?? undefined);
+      const toggle = schema.nodes.toggle_list!.create(null, [summary, body]);
+      dispatch(state.tr.replaceSelectionWith(toggle).scrollIntoView());
+    }
     return true;
   };
 
@@ -194,7 +222,11 @@ export function createCommands(schema: Schema): EditorCommands {
     toggleBlockquote,
     toggleBulletList,
     toggleOrderedList,
+    outdentListItem,
+    indentListItem,
     insertHorizontalRule,
+    insertCallout,
+    insertToggleList,
     insertTable,
     insertImage,
     insertVideo,

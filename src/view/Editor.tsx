@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Editor as MilkdownEditor, schemaCtx, editorViewCtx, serializerCtx } from "@milkdown/kit/core";
 import type { Transaction } from "@milkdown/kit/prose/state";
+import { isTauriAndroid } from "./platform";
 import "@milkdown/kit/prose/view/style/prosemirror.css";
 import "@milkdown/kit/prose/tables/style/tables.css";
 import { buildMilkdownEditor } from "./createMilkdownEditor";
 import { createCommands, type EditorCommands } from "./commands";
 import { Toolbar } from "./Toolbar";
+import { SlashMenu } from "./SlashMenu";
 import { DrawLayer } from "./DrawLayer";
 import { PagingLayer } from "./PagingLayer";
 import { ModeHeader, PEN_STYLES, type EditorMode, type PenStyle, type DrawAnchorMode } from "./ModeHeader";
@@ -18,6 +20,18 @@ import "./editor-base.css";
 import "./draw-layer.css";
 import "./paging-layer.css";
 import "./mode-header.css";
+import "./slash-menu.css";
+
+// The "/" insert menu is a keyboard-centric affordance with no clear
+// mobile-touch equivalent -- web/desktop only (decision 3, UX_PLAN.md).
+// Tauri/Android keeps Toolbar's existing tap-to-open Insert group as the
+// only insert path, unaffected either way. Checked against isTauriAndroid(),
+// not plain isTauri() -- Tauri can also run as a desktop app (Windows/macOS/
+// Linux) for local testing, which is keyboard/mouse-centric same as web and
+// should keep the slash menu, not get lumped in with Android's constraints.
+// Computed once at module load, not per-render -- doesn't change over an
+// app session.
+const SLASH_MENU_AVAILABLE = !isTauriAndroid();
 
 // Above this, a single ProseMirror view holding the entire document starts
 // costing real keystroke latency (every node gets its own DOM element kept
@@ -304,6 +318,7 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
         />
         <PagingLayer active={pagingMode} />
       </div>
+      {mode === "text" && editor && commands && SLASH_MENU_AVAILABLE && <SlashMenu editor={editor} commands={commands} />}
       {mode === "text" && editor && commands && <Toolbar editor={editor} commands={commands} />}
     </div>
   );
