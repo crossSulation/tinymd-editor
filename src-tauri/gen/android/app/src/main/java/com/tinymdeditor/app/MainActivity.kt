@@ -9,6 +9,7 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : TauriActivity() {
   // Captured in onWebViewCreate -- needed by onConfigurationChanged below,
@@ -19,6 +20,7 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+    hideSystemBars()
   }
 
   override fun onStart() {
@@ -26,6 +28,29 @@ class MainActivity : TauriActivity() {
     window.decorView.post {
        disableWebViewLongClick(window.decorView)
     }
+  }
+
+  // Default full-screen/immersive: hide BOTH the status bar and the
+  // navigation bar, not just draw edge-to-edge behind them (enableEdgeToEdge
+  // above only stops the window from resizing for them -- the bars
+  // themselves stay visible until actually hidden here). BEHAVIOR_SHOW_
+  // TRANSIENT_BARS_BY_SWIPE is the standard "immersive sticky" mode: a
+  // swipe from a screen edge still temporarily reveals the system bars
+  // (so the user isn't ever fully locked out of them), after which they
+  // auto-hide again rather than staying shown -- this does NOT re-fire
+  // hideSystemBars() itself; onWindowFocusChanged below is what re-applies
+  // the hidden state once the transient reveal (or any other focus loss,
+  // e.g. backgrounding the app or a system dialog) ends, since Android
+  // does not guarantee the hidden state otherwise survives those.
+  private fun hideSystemBars() {
+    val controller = WindowInsetsControllerCompat(window, window.decorView)
+    controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    controller.hide(WindowInsetsCompat.Type.systemBars())
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (hasFocus) hideSystemBars()
   }
   // enableEdgeToEdge() means the window deliberately does NOT resize when the
   // soft keyboard appears (that's the whole point of edge-to-edge), and this

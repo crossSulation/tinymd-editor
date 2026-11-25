@@ -259,10 +259,22 @@
 /* Explicit, labeled rows (see Toolbar.tsx's ToolbarGroup.rows) rather than
    one flat auto-wrapping grid -- related items (e.g. Image/Video/Audio) stay
    together on their own named row regardless of how many items are in the
-   group. */
+   group. `flex: 1 1 auto; min-height: 0` is required for `overflow-y: auto`
+   below to actually do anything -- without it, this flex-column child of
+   .toolbar-group-panel sizes to its own natural (full) content height
+   instead of being constrained to the panel's fixed `height` (set inline,
+   Toolbar.tsx's `panelHeight`), so nothing ever overflows ITS OWN box and
+   the last row(s) (e.g. "Insert"'s own "Blocks" row) were simply cut off
+   below the panel's bottom edge, unreachable, rather than scrollable --
+   confirmed directly as a real, reported bug, not theoretical. Same
+   flex-child-needs-min-height-0-to-scroll gotcha already documented
+   elsewhere in this codebase (editor-base.css's own .editor-mount/.milkdown
+   comment), just not yet applied here until now. */
 .toolbar-group-rows {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 0.75rem;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
