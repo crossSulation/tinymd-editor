@@ -1,6 +1,10 @@
 /* Overlays the editor's content area (see editor-base.css's .editor-content).
    pointer-events: none by default so it never blocks normal text editing;
-   only the canvas itself (while active) and the controls intercept touches. */
+   only the canvas itself (while active) intercepts touches -- the former
+   floating "Clear" control that used to live here too moved into
+   Toolbar.tsx's draw-tools row (requested directly; toolbar.css's
+   .toolbar-mode-row), which is also why the active z-index bump below has
+   to clear the Toolbar's own z-index now, not just the code-block picker's. */
 .draw-layer {
   position: absolute;
   inset: 0;
@@ -29,49 +33,15 @@
    draw gesture to the canvas correctly, but the ink itself would be
    invisible exactly where it was drawn. Only bumped while active, not at
    the baseline -- a persisted stroke in TEXT mode is meant to sit BELOW
-   real UI chrome (e.g. the bottom Toolbar, z-index: 10/20), not cover it. */
+   real UI chrome, not cover it. **This WAS also true of the bottom
+   Toolbar while drawing was active** (its old z-index: 10 sat below this
+   layer's own active 30) -- confirmed as a real bug (every tap on Draw
+   mode's own toolbar row was silently swallowed by this canvas, masked in
+   this session's own CDP tests since they click buttons programmatically
+   rather than via real coordinate-based taps), fixed by raising the
+   Toolbar's own z-index to 40 (toolbar.css) rather than lowering this
+   layer's -- the ink itself still needs to paint above in-content chrome
+   either way. */
 .draw-layer[data-active="true"] {
   z-index: 30;
-}
-
-.draw-layer-controls {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 2.75rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  pointer-events: auto; /* the toggle must stay tappable even while inactive */
-}
-
-.draw-layer-toggle,
-.draw-layer-clear {
-  min-width: 44px;
-  min-height: 44px;
-  border: 1px solid rgba(0, 0, 0, 0.23);
-  border-radius: 50%;
-  background: #fff;
-  font: inherit;
-  font-size: 1.1rem;
-  cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
-}
-
-.draw-layer-clear {
-  border-radius: 20px;
-  min-width: 0;
-  padding: 0 0.75rem;
-  font-size: 0.85rem;
-}
-
-/* :active (press feedback), not :hover -- touch has no hover state. */
-.draw-layer-toggle:active,
-.draw-layer-clear:active {
-  background: rgba(0, 0, 0, 0.06);
-}
-
-.draw-layer[data-active="true"] .draw-layer-toggle {
-  background: #1976d2;
-  color: #fff;
-  border-color: #1976d2;
 }

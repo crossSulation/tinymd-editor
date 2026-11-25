@@ -73,6 +73,20 @@ export interface DrawLayerProps {
   /** Chunked analogue of `onInkPersisted`, parameterized by chunk id -- see that prop's own doc comment for why this bypass is needed at all. */
   onChunkInkPersisted: (chunkId: string) => void;
   /**
+   * Hands this component's own `clear()` up to the caller (Editor.tsx),
+   * same register-a-callback pattern as `registerTransactionHandler` above
+   * -- "Clear" moved out of this component's own JSX into Toolbar.tsx's
+   * draw-tools row (requested directly, so it sits alongside Pin/Sketch/
+   * pen-style rather than as a separate floating control of its own), but
+   * the actual strokes/canvas state this needs to touch (`strokesRef`,
+   * `redrawAll`, `syncInkSingle`/`syncInkForChunk`) all still live here,
+   * not in Toolbar -- re-registered on every render (no dependency array)
+   * rather than once, since `clear` itself is a fresh closure each render
+   * and nothing here tracks which of its own closed-over values might have
+   * changed; the cost is negligible (Editor.tsx just overwrites a ref).
+   */
+  registerClearHandler: (handler: (() => void) | null) => void;
+  /**
    * Which of Toolbar.tsx's two draw modes is currently selected -- see
    * `DrawAnchorMode`'s own doc comment. "sketch" makes `capturePoint` skip
    * the rigid-anchoring attempt entirely (even though an editor/chunk IS
@@ -268,6 +282,7 @@ export function DrawLayer({
   registerChunkTransactionHandler,
   registerChunkReadyHandler,
   onChunkInkPersisted,
+  registerClearHandler,
   anchorMode,
 }: DrawLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1242,6 +1257,12 @@ export function DrawLayer({
     for (const chunkId of chunkIds) syncInkForChunk(chunkId);
   }
 
+  useEffect(() => {
+    registerClearHandler(clear);
+    return () => registerClearHandler(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
   return (
     <div ref={containerRef} className="draw-layer" data-active={active || undefined}>
       <canvas
@@ -1256,13 +1277,6 @@ export function DrawLayer({
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
       />
-      {active && (
-        <div className="draw-layer-controls">
-          <button type="button" className="draw-layer-clear" onClick={clear} aria-label="Clear drawing">
-            Clear
-          </button>
-        </div>
-      )}
     </div>
   );
 }

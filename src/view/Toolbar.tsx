@@ -149,6 +149,8 @@ export interface ToolbarProps {
    */
   pagingMode: boolean;
   onPagingModeChange: (enabled: boolean) => void;
+  /** Clears every stroke -- moved here from DrawLayer.tsx's own floating controls (requested directly), which still owns the actual clearing logic; this just triggers it. */
+  onClearDrawing: () => void;
 }
 
 interface ToolbarItem {
@@ -237,6 +239,7 @@ export function Toolbar({
   drawDisabled,
   pagingMode,
   onPagingModeChange,
+  onClearDrawing,
 }: ToolbarProps) {
   const view = editor?.ctx.get(editorViewCtx) ?? null;
   const schema = editor?.ctx.get(schemaCtx) ?? null;
@@ -395,6 +398,17 @@ export function Toolbar({
       >
         ☁
       </button>
+      <span className="mode-header-separator" aria-hidden="true" />
+      <button
+        type="button"
+        className="mode-header-button"
+        title="Clear drawing"
+        aria-label="Clear drawing"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onClearDrawing}
+      >
+        🧹
+      </button>
     </div>
   );
 
@@ -406,7 +420,7 @@ export function Toolbar({
   // show yet either.
   if (!editor || !commands || !view || !schema || !state) {
     return (
-      <div className="toolbar" role="toolbar" style={{ bottom: 0 }}>
+      <div className="toolbar" role="toolbar" data-mode={effectiveMode} style={{ bottom: 0 }}>
         <div className="toolbar-row" />
       </div>
     );
@@ -657,7 +671,7 @@ export function Toolbar({
   const showRichContent = effectiveMode === "text" && !toolbarSuppressed && (keyboardInset > 0 || activeGroup !== null || selectedMediaType !== null);
 
   return (
-    <div className="toolbar" role="toolbar" style={{ bottom: effectiveMode === "text" ? keyboardInset : 0 }}>
+    <div className="toolbar" role="toolbar" data-mode={effectiveMode} style={{ bottom: effectiveMode === "text" ? keyboardInset : 0 }}>
       {effectiveMode === "draw" ? drawModeRow : !showRichContent ? (
         <div className="toolbar-row" />
       ) : (activeGroup ? (
@@ -764,6 +778,25 @@ export function Toolbar({
             onClick={() => view.dom.blur()}
           >
             ⌨
+          </button>
+          {/* Explicit, discoverable way to start drawing from Text mode,
+              distinct from "Hide keyboard" above even though both end up
+              blurring the view -- blurring is what the falling-edge mode
+              derivation above reacts to (textEditingActive goes false, with
+              nothing else to keep it true here: this button only renders in
+              the default row, which itself only renders when neither a
+              group panel is open nor a node is selected), so no separate
+              mode-setting call is needed here. */}
+          <button
+            type="button"
+            className="toolbar-button"
+            title="Draw"
+            aria-label="Draw"
+            disabled={drawDisabled}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => view.dom.blur()}
+          >
+            ✎
           </button>
         </div>
       ))}

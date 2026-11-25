@@ -102,6 +102,13 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
   // path; the virtualized path never calls buildMilkdownEditor with
   // onTransaction (see chunkMount.ts), so this stays unused there.
   const transactionHandlerRef = useRef<((tr: Transaction) => void) | null>(null);
+  // DrawLayer's own "clear" action, handed up so Toolbar.tsx's draw-tools
+  // row can trigger it directly (moved there from DrawLayer's own JSX,
+  // requested directly) -- same register-a-callback-into-a-ref pattern as
+  // transactionHandlerRef above, since the clearing logic itself still
+  // needs to live inside DrawLayer (it touches strokesRef/canvas state that
+  // isn't exposed anywhere else).
+  const drawClearHandlerRef = useRef<(() => void) | null>(null);
 
   // Ink-only changes (drawing without touching any text) are persisted via
   // a transaction dispatched with `addToHistory: false` (see
@@ -285,6 +292,9 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
             chunkReadyHandlerRef.current = handler;
           }}
           onChunkInkPersisted={handleChunkInkPersisted}
+          registerClearHandler={(handler) => {
+            drawClearHandlerRef.current = handler;
+          }}
         />
         <PagingLayer active={pagingMode} />
       </div>
@@ -295,6 +305,7 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
         onModeChange={setMode}
         penStyle={penStyle}
         onPenStyleChange={setPenStyle}
+        onClearDrawing={() => drawClearHandlerRef.current?.()}
         anchorMode={anchorMode}
         onAnchorModeChange={setAnchorMode}
         pagingMode={pagingMode}

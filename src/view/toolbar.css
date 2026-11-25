@@ -14,33 +14,86 @@
    "Typing with software keyboard" artboards' own accessory-bar look
    (#F4F5F7 bar, #DDE0E5 divider, borderless #3A3F47 icon buttons, #EAF1FE/
    #1D4ED8 active tint) -- that full-width docked-bar shape is the same one
-   this toolbar already uses, unlike the same design's OTHER artboard
+   this toolbar uses in Text mode, unlike the same design's OTHER artboard
    (Main.dc.html) showing a floating centered pill instead, which wouldn't
-   fit this app's own mobile-first horizontally-scrollable-row approach
+   fit Text mode's own mobile-first horizontally-scrollable-row approach
    (overflow on a narrow phone needs a full-width scroll track, not a
-   floating card). */
+   floating card). Draw mode's row is the opposite case -- a small, fixed,
+   never-overflowing set of icons (pen style, Pin/Sketch, Paging, "Edit
+   text") -- so IT is styled as a floating pill instead (requested
+   directly), via the `[data-mode="draw"]` rule below; the full-width-dock
+   reasoning above was never about Draw mode's content, only Text mode's. */
 .toolbar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 10;
+  /* Above .draw-layer's own active z-index: 30 (draw-layer.css) -- without
+     this, every tap on Draw mode's own row (Pin/Sketch/pen-style/"Edit
+     text") was silently swallowed by the drawing canvas sitting visually
+     on top of it instead: confirmed directly via elementsFromPoint, a real
+     bug masked in this session's own CDP tests, which click these buttons
+     programmatically (bypassing hit-testing) rather than via a real
+     coordinate-based tap. 40 clears draw-layer's 30 and paging-layer's 25
+     (paging-layer.css) with room to spare, while staying well below
+     new-document-modal's 100 -- .media-preview-overlay's own z-index: 20
+     (below, in this same file) is unaffected despite being numerically
+     lower: it's a DOM descendant of .toolbar, so it only orders itself
+     against .toolbar's OTHER children, not against anything outside
+     .toolbar's own stacking context (which .toolbar's fixed positioning
+     already establishes regardless of z-index) -- raising .toolbar's own
+     z-index here correctly lifts that whole subtree, lightbox included. */
+  z-index: 40;
   background: #f4f5f7;
   border-top: 1px solid #dde0e5;
 }
 
-/* Draw-tools row: "Edit text" (the one way back to Text mode), Paging, pen
-   style, Pin/Sketch -- shown instead of (not alongside) the Text-mode rows
-   below, so there's no border-bottom here the way there was when this sat
-   above a second, always-present row. Icon-only, not tab-styled (no
-   underline, no text labels), same visual language as the rest of this
-   toolbar's buttons. */
+/* Draw mode's own box goes fully transparent and non-interactive -- only
+   .toolbar-mode-row (below) re-enables pointer-events, so the empty space
+   around the floating pill (full toolbar width/height otherwise) doesn't
+   swallow a drawing gesture meant for the canvas underneath it, the same
+   pattern draw-layer.css's own .draw-layer/.draw-layer-controls pair
+   already uses for an identical reason. justify-content: center is what
+   actually produces the floating-pill effect: .toolbar-mode-row sizes to
+   its own content (flex default) rather than stretching full-width. */
+.toolbar[data-mode="draw"] {
+  display: flex;
+  justify-content: center;
+  background: transparent;
+  border-top: none;
+  pointer-events: none;
+}
+
+/* Draw-tools row, now a floating pill (requested directly) rather than a
+   full-width docked bar -- "Edit text" (the one way back to Text mode),
+   Paging, pen style, Pin/Sketch. Icon-only, not tab-styled (no underline,
+   no text labels), same visual language as the rest of this toolbar's
+   buttons; same #F4F5F7/#DDE0E5 palette as the docked Text-mode bar, just
+   as a self-contained rounded card instead of a full-width strip.
+   `env(safe-area-inset-bottom)` is kept in the calc() below but CONFIRMED
+   (on a real device with a system nav/gesture bar, not just suspected) to
+   contribute nothing on this app's Android WebView -- the same class of
+   "don't trust a standard web signal alone on this app's Android WebView
+   without confirming" lesson already behind the tinymd:keyboard-inset
+   bridge elsewhere in this app, since visualViewport alone wasn't reliable
+   there either. The 3.5rem flat baseline (raised from an initial 0.75rem,
+   then 1.5rem, neither enough on-device) is what actually does the work
+   here and must keep doing so on its own -- `env()` stays in the calc()
+   as a harmless no-cost addition for any OTHER platform/browser where it
+   DOES resolve (e.g. iOS Safari), not as something this app's own primary
+   target can depend on. */
 .toolbar-mode-row {
   display: flex;
   align-items: center;
   flex: none;
   gap: 2px;
   padding: 0.5rem;
+  margin: 0 1rem calc(env(safe-area-inset-bottom, 0px) + 3.5rem);
+  background: #f4f5f7;
+  border: 1px solid #dde0e5;
+  border-radius: 16px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
+  pointer-events: auto;
 }
 
 .mode-header-button {
