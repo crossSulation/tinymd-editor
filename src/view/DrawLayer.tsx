@@ -10,13 +10,13 @@ import type { Transaction } from "@milkdown/kit/prose/state";
 import type { EditorView } from "@milkdown/kit/prose/view";
 import { readInkData, writeInkData, INK_SYNC_META, type InkData, type InkStroke } from "./inkPersistence";
 import { CONTENT_REPLACE_META } from "./dirtyPlugin";
-import type { PenStyle, DrawAnchorMode } from "./ModeHeader";
+import type { PenStyle, DrawAnchorMode } from "./drawTypes";
 import { strokeOutlineToPath2D } from "./freehandStroke";
 
 export interface DrawLayerProps {
-  /** Whether draw mode is active -- owned by Editor.tsx's ModeHeader, not this component itself. */
+  /** Whether draw mode is active -- owned by Editor.tsx (the mode-switch control lives in Toolbar.tsx), not this component itself. */
   active: boolean;
-  /** Current color/width/opacity to paint with -- also selected via ModeHeader. */
+  /** Current color/width/opacity to paint with -- also selected via Toolbar.tsx's mode row. */
   penStyle: PenStyle;
   /**
    * The single-instance path's one stable Milkdown editor, or null --
@@ -73,7 +73,7 @@ export interface DrawLayerProps {
   /** Chunked analogue of `onInkPersisted`, parameterized by chunk id -- see that prop's own doc comment for why this bypass is needed at all. */
   onChunkInkPersisted: (chunkId: string) => void;
   /**
-   * Which of ModeHeader's two draw modes is currently selected -- see
+   * Which of Toolbar.tsx's two draw modes is currently selected -- see
    * `DrawAnchorMode`'s own doc comment. "sketch" makes `capturePoint` skip
    * the rigid-anchoring attempt entirely (even though an editor/chunk IS
    * live) and every point captures as scroll-anchored instead -- the same
@@ -206,7 +206,7 @@ const SAMPLE_INTERVAL_MS = 16;
 const TWO_FINGER_GRACE_MS = 250;
 
 // A free-floating ink layer over the editor's visible content area. A NEW
-// stroke is captured one of two ways, per ModeHeader's Pin/Sketch toggle:
+// stroke is captured one of two ways, per Toolbar.tsx's Pin/Sketch toggle:
 //
 //   - PM-rigid / PM-chunk-rigid ("pin" mode, the default): ONE anchor
 //     position is resolved for the whole gesture (the nearest enclosing
@@ -226,10 +226,10 @@ const TWO_FINGER_GRACE_MS = 250;
 //     Tracks scrolling but NOT reflow, and never persists. Reached two
 //     different ways: automatically, during either path's own brief
 //     startup window (before the single instance, or any chunk, has
-//     mounted yet -- see ModeHeader.tsx's `drawDisabled`, which prevents
+//     mounted yet -- see Toolbar.tsx's `drawDisabled` prop, which prevents
 //     drawing during that exact window specifically so a stroke never
 //     silently lands here when the user would reasonably expect it to
-//     persist); or deliberately, via ModeHeader.tsx's Pin/Sketch toggle
+//     persist); or deliberately, via Toolbar.tsx's Pin/Sketch toggle
 //     (`anchorMode` prop, see `DrawAnchorMode`'s own doc comment) -- a
 //     user-chosen "just drawing, not markup on this specific text" mode,
 //     for strokes that shouldn't reshape/disappear/translate at all as the
@@ -553,7 +553,7 @@ export function DrawLayer({
       }
     }
     // "sketch" mode, or a "pin" resolution that failed (no live editor/chunk
-    // yet -- the startup window ModeHeader's `drawDisabled` already
+    // yet -- the startup window Toolbar.tsx's `drawDisabled` already
     // prevents in practice, but handled gracefully regardless).
     return { kind: "scroll", clientX: event.clientX, yDoc: event.clientY + getScrollTop() };
   }

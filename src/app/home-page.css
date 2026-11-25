@@ -49,6 +49,15 @@
   gap: 0.5rem;
 }
 
+/* Each recursion level of DocTree is one more level of real DOM nesting --
+   this rule compounds naturally per level without needing to know its own
+   depth. Top margin (not gap) since it's the nested list's own spacing from
+   its parent row, not between its own children (the flex `gap` above
+   already handles that). */
+.doc-list .doc-list {
+  margin: 0.5rem 0 0 1.5rem;
+}
+
 .doc-list-item {
   width: 100%;
   box-sizing: border-box;
@@ -82,6 +91,25 @@
 
 .doc-list-item:hover .doc-list-open {
   background: rgba(25, 118, 210, 0.04);
+}
+
+.doc-list-add-child {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.doc-list-add-child:hover {
+  color: #1976d2;
+  border-color: #1976d2;
+  background: rgba(25, 118, 210, 0.06);
 }
 
 .doc-list-export {

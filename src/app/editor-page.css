@@ -17,6 +17,14 @@
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 0.5rem;
+  overflow-x: auto;
+}
+
+.editor-breadcrumb {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .back-button {
@@ -31,6 +39,37 @@
 }
 
 .back-button:hover {
+  text-decoration: underline;
+}
+
+.editor-breadcrumb-segment {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.editor-breadcrumb-sep {
+  flex: none;
+  color: rgba(0, 0, 0, 0.35);
+}
+
+.editor-breadcrumb-link {
+  flex: none;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: none;
+  background: transparent;
+  color: #1976d2;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.editor-breadcrumb-link:hover {
   text-decoration: underline;
 }
 

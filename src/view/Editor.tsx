@@ -10,7 +10,7 @@ import { Toolbar } from "./Toolbar";
 import { SlashMenu } from "./SlashMenu";
 import { DrawLayer } from "./DrawLayer";
 import { PagingLayer } from "./PagingLayer";
-import { ModeHeader, PEN_STYLES, type EditorMode, type PenStyle, type DrawAnchorMode } from "./ModeHeader";
+import { PEN_STYLES, type EditorMode, type PenStyle, type DrawAnchorMode } from "./drawTypes";
 import { VirtualizedEditorBody } from "./VirtualizedEditorBody";
 import { VirtualizedEditorController } from "./virtualizedEditorController";
 import { useKeyboardInset } from "./useKeyboardInset";
@@ -19,7 +19,6 @@ import "./code-block-layout.css";
 import "./editor-base.css";
 import "./draw-layer.css";
 import "./paging-layer.css";
-import "./mode-header.css";
 import "./slash-menu.css";
 
 // The "/" insert menu is a keyboard-centric affordance with no clear
@@ -162,19 +161,6 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
     }
   }
 
-  function handleModeChange(next: EditorMode) {
-    // Dismiss the keyboard when leaving text mode -- same technique used
-    // elsewhere (group panels, code-block exit): nothing about switching to
-    // draw mode needs the editor focused, and DrawLayer's canvas already
-    // blocks interaction with the text underneath while active regardless,
-    // but blurring also lets the toolbar hide itself the normal way (it's
-    // driven by keyboardInset, not by mode -- see Toolbar.tsx).
-    if (next === "draw" && editor) {
-      editor.ctx.get(editorViewCtx).dom.blur();
-    }
-    setMode(next);
-  }
-
   // Single-document path: one Milkdown instance for the whole document.
   // Skipped entirely in virtualized mode -- VirtualizedEditorBody mounts its
   // own per-chunk instances instead and reports the focused one below.
@@ -217,22 +203,6 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
 
   return (
     <div className={className}>
-      <ModeHeader
-        mode={mode}
-        onModeChange={handleModeChange}
-        penStyle={penStyle}
-        onPenStyleChange={setPenStyle}
-        anchorMode={anchorMode}
-        onAnchorModeChange={setAnchorMode}
-        pagingMode={pagingMode}
-        onPagingModeChange={setPagingMode}
-        // Single-instance: its own brief startup window (editor still
-        // null). Virtualized: the analogous window before any chunk has
-        // mounted yet (see anyChunkMounted's own doc comment) -- not a
-        // permanent gate either way; drawing works normally on virtualized
-        // documents once at least one chunk is live, same as it always has.
-        drawDisabled={isVirtualized ? !anyChunkMounted : !editor}
-      />
       {isVirtualized && virtualizedPage && virtualizedPage.total > 1 && (
         <div className="virtualized-page-nav" role="navigation" aria-label="Page navigation">
           <button
@@ -319,7 +289,23 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
         <PagingLayer active={pagingMode} />
       </div>
       {mode === "text" && editor && commands && SLASH_MENU_AVAILABLE && <SlashMenu editor={editor} commands={commands} />}
-      {mode === "text" && editor && commands && <Toolbar editor={editor} commands={commands} />}
+      <Toolbar
+        editor={editor}
+        commands={commands}
+        onModeChange={setMode}
+        penStyle={penStyle}
+        onPenStyleChange={setPenStyle}
+        anchorMode={anchorMode}
+        onAnchorModeChange={setAnchorMode}
+        pagingMode={pagingMode}
+        onPagingModeChange={setPagingMode}
+        // Single-instance: its own brief startup window (editor still
+        // null). Virtualized: the analogous window before any chunk has
+        // mounted yet (see anyChunkMounted's own doc comment) -- not a
+        // permanent gate either way; drawing works normally on virtualized
+        // documents once at least one chunk is live, same as it always has.
+        drawDisabled={isVirtualized ? !anyChunkMounted : !editor}
+      />
     </div>
   );
 }

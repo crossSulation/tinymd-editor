@@ -8,6 +8,32 @@ import "./editor-page.css";
 export interface EditorPageProps {
   docId: string;
   onBack: () => void;
+  /** Navigates directly to another document -- used by the breadcrumb to jump to an ancestor page. */
+  onOpenDoc: (docId: string) => void;
+}
+
+interface BreadcrumbEntry {
+  id: string;
+  title: string;
+}
+
+// Walks the parent chain via sequential loadDoc calls (root-first order)
+// rather than a dedicated bulk query -- this app's own document trees are
+// shallow (a personal notes hierarchy, not a large shared wiki), so this is
+// simpler than adding a second "ancestor chain" SQL path alongside listDocs'
+// existing flat one. The iteration cap is a cheap safety net against a
+// hypothetical cycle (not something SET NULL/the lack of reparenting UI
+// should ever actually produce), not a real expected case.
+async function loadBreadcrumb(parentId: string | null): Promise<BreadcrumbEntry[]> {
+  const chain: BreadcrumbEntry[] = [];
+  let currentId = parentId;
+  for (let i = 0; currentId && i < 50; i++) {
+    const doc = await loadDoc(currentId);
+    if (!doc) break;
+    chain.unshift({ id: currentId, title: doc.meta.title || "Untitled" });
+    currentId = doc.parentId;
+  }
+  return chain;
 }
 
 // This page is the app-specific glue (loading/saving a specific document ID)
@@ -18,9 +44,10 @@ export interface EditorPageProps {
 // title/author/tags are set once at creation time (HomePage's
 // NewDocumentModal) and are not editable here -- there is deliberately no
 // metadata-editing UI on this page (see Claude.md's Persistence section).
-export function EditorPage({ docId, onBack }: EditorPageProps) {
+export function EditorPage({ docId, onBack, onOpenDoc }: EditorPageProps) {
   const [meta, setMeta] = useState<DocumentMeta | null>(null);
   const [initialMarkdown, setInitialMarkdown] = useState<string | null>(null);
+  const [breadcrumb, setBreadcrumb] = useState<BreadcrumbEntry[]>([]);
   const markdownRef = useRef("");
   const saveRef = useRef<ReturnType<typeof createDebouncedSave> | null>(null);
   // Mirrors `meta` for synchronous reads in handleContentChange -- see that
@@ -32,6 +59,7 @@ export function EditorPage({ docId, onBack }: EditorPageProps) {
     let cancelled = false;
     setMeta(null);
     setInitialMarkdown(null);
+    setBreadcrumb([]);
 
     void (async () => {
       const doc = await loadDoc(docId);
@@ -43,6 +71,9 @@ export function EditorPage({ docId, onBack }: EditorPageProps) {
       metaRef.current = doc.meta;
       setMeta(doc.meta);
       setInitialMarkdown(markdown);
+
+      const chain = await loadBreadcrumb(doc.parentId);
+      if (!cancelled) setBreadcrumb(chain);
     })();
 
     return () => {
@@ -111,9 +142,20 @@ export function EditorPage({ docId, onBack }: EditorPageProps) {
   return (
     <div className="app-editor">
       <div className="editor-page-header">
-        <button type="button" className="back-button" onClick={onBack}>
-          ← Home
-        </button>
+        <nav className="editor-breadcrumb" aria-label="Breadcrumb">
+          <button type="button" className="back-button" onClick={onBack}>
+            ← Home
+          </button>
+          {breadcrumb.map((entry) => (
+            <span key={entry.id} className="editor-breadcrumb-segment">
+              <span aria-hidden="true" className="editor-breadcrumb-sep">/</span>
+              <button type="button" className="editor-breadcrumb-link" onClick={() => onOpenDoc(entry.id)}>
+                {entry.title}
+              </button>
+            </span>
+          ))}
+          <span aria-hidden="true" className="editor-breadcrumb-sep">/</span>
+        </nav>
         <span className="editor-page-title">{meta.title || "Untitled"}</span>
       </div>
       <Editor className="editor-surface" initialMarkdown={initialMarkdown} onChange={handleContentChange} />

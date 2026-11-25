@@ -11,6 +11,7 @@ import { useKeyboardInset } from "./useKeyboardInset";
 import { TEXT_COLORS, isTextColorActive } from "./textColor";
 import { applyCodeWrapToAll } from "./codeBlockWrap";
 import { CELL_COLORS, toggleHeaderColumn, setCellColor, fillColumnColor } from "./tableCosmetics";
+import { PEN_STYLES, type EditorMode, type PenStyle, type DrawAnchorMode } from "./drawTypes";
 
 // Best-guess group-panel height for the very first open, before any real
 // keyboard height has been observed on this device (e.g. the editor was
@@ -24,7 +25,7 @@ const FALLBACK_PANEL_HEIGHT = 280;
 // (confirmed against @milkdown/components' NodeView source) and is still a
 // descendant of view.dom regardless of which CodeMirror internals end up
 // focused, so a view.dom-scoped focusin/focusout listener reliably tracks it.
-function useToolbarSuppressed(view: EditorView, selection: EditorState["selection"]): boolean {
+function useToolbarSuppressed(view: EditorView | null, selection: EditorState["selection"] | undefined): boolean {
   // Tracks ONLY whether DOM focus geometrically sits inside a code block --
   // purely a function of focus events, with no opinion on selection type.
   // The final suppression decision below combines this with `selection`
@@ -42,6 +43,7 @@ function useToolbarSuppressed(view: EditorView, selection: EditorState["selectio
   const [focusInsideCodeBlock, setFocusInsideCodeBlock] = useState(false);
 
   useEffect(() => {
+    if (!view) return;
     const dom = view.dom;
     const update = () => {
       const active = document.activeElement;
@@ -59,9 +61,94 @@ function useToolbarSuppressed(view: EditorView, selection: EditorState["selectio
   return focusInsideCodeBlock && !(selection instanceof NodeSelection);
 }
 
+// Whether DOM focus currently sits anywhere inside the editor's own view --
+// the signal `mode` is now derived from (see `effectiveMode` below), instead
+// of a user-flippable toggle. Deliberately NOT keyboardInset: keyboardInset
+// tracks an actual on-screen keyboard's height for layout purposes only
+// (see useKeyboardInset.ts) and stays 0 on desktop/a hardware keyboard even
+// while the editor is genuinely focused and being typed into -- confirmed
+// directly against that hook's own source before relying on it here, since
+// using it as the mode signal would have silently made Text mode
+// unreachable on any device without an on-screen keyboard.
+function useViewFocused(view: EditorView | null): boolean {
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!view) {
+      setFocused(false);
+      return;
+    }
+    const dom = view.dom;
+    const update = () => setFocused(!!document.activeElement && dom.contains(document.activeElement));
+    update();
+    dom.addEventListener("focusin", update);
+    dom.addEventListener("focusout", update);
+    return () => {
+      dom.removeEventListener("focusin", update);
+      dom.removeEventListener("focusout", update);
+    };
+  }, [view]);
+
+  return focused;
+}
+
 export interface ToolbarProps {
-  editor: Editor;
-  commands: EditorCommands;
+  /**
+   * Null during either editor path's own brief startup window -- the
+   * single-instance editor before Milkdown's `.create()` resolves, or the
+   * virtualized path before any chunk has received focus yet (see
+   * Editor.tsx's `anyChunkMounted`/`onActiveChange`). The draw-tools row
+   * below (pen style, Pin/Sketch, Paging, "Edit text") still renders in
+   * this case -- it doesn't depend on either -- only the rich
+   * editor-command toolbar (format buttons, Insert/Table/Color groups)
+   * needs them and is skipped until they're available.
+   */
+  editor: Editor | null;
+  commands: EditorCommands | null;
+  /**
+   * There is no longer a manual Text/Draw toggle -- mode is derived
+   * entirely from whether text-editing is actually happening right now
+   * (the editor has DOM focus, a group panel is open, or a media node is
+   * selected) vs. not (idle, blurred, nothing selected), so a stroke can
+   * start immediately with no mode switch required. This callback is a
+   * one-way report of that computed value, fired from a `useEffect` below
+   * -- not a request the parent should feed back in as a `mode` prop.
+   */
+  onModeChange: (mode: EditorMode) => void;
+  penStyle: PenStyle;
+  onPenStyleChange: (style: PenStyle) => void;
+  /** See `DrawAnchorMode`'s own doc comment. Only rendered/relevant in Draw mode. */
+  anchorMode: DrawAnchorMode;
+  onAnchorModeChange: (mode: DrawAnchorMode) => void;
+  /**
+   * True only during either path's own brief startup window (see `editor`'s
+   * own doc comment above) -- clamps the computed mode to "text" for that
+   * window instead of letting it default to "draw" the way idle/blurred
+   * normally would, since DrawLayer.tsx's own position-anchoring needs a
+   * live editor/chunk to capture a stroke as reflow-anchored (and
+   * therefore persistable); drawing before that falls back to scroll-only
+   * anchoring with NO visible difference on screen, so a stroke drawn in
+   * that window looked identical to a normal one but silently never got
+   * saved -- confirmed directly as a real user-visible gap on a real
+   * (slower) device, not just a theoretical race. (Irrelevant to -- not to
+   * be confused with -- "sketch" mode above, which is a deliberate,
+   * permanent choice, not a startup-window gap.)
+   */
+  drawDisabled?: boolean;
+  /**
+   * Whole-viewport pagination mode (see PagingLayer.tsx) -- deliberately
+   * independent of the virtualized editor's own chunk/heading-based
+   * "Page N / Total" nav bar (`Editor.tsx`'s `virtualizedPage`): this is a
+   * fresh, separate concept that defines a "page" as whatever currently
+   * fits the viewport, works on ANY document regardless of size/
+   * virtualization, and layers scroll-snap-to-next-page behavior on top of
+   * the existing scroller rather than restructuring how content is
+   * rendered. Always visible (not gated on `mode === "draw"`) since it
+   * governs how the CONTENT scrolls, which is relevant in both text and
+   * draw mode.
+   */
+  pagingMode: boolean;
+  onPagingModeChange: (enabled: boolean) => void;
 }
 
 interface ToolbarItem {
@@ -139,12 +226,24 @@ function ToolbarItemButton({
 // deliberate blur regardless of keyboardInset (see `visible` below) -- it's
 // only once no group is expanded that visibility goes back to tracking the
 // keyboard.
-export function Toolbar({ editor, commands }: ToolbarProps) {
-  const view = editor.ctx.get(editorViewCtx);
-  const schema = editor.ctx.get(schemaCtx);
-  const state = view.state;
+export function Toolbar({
+  editor,
+  commands,
+  onModeChange,
+  penStyle,
+  onPenStyleChange,
+  anchorMode,
+  onAnchorModeChange,
+  drawDisabled,
+  pagingMode,
+  onPagingModeChange,
+}: ToolbarProps) {
+  const view = editor?.ctx.get(editorViewCtx) ?? null;
+  const schema = editor?.ctx.get(schemaCtx) ?? null;
+  const state = view?.state;
   const keyboardInset = useKeyboardInset();
-  const toolbarSuppressed = useToolbarSuppressed(view, state.selection);
+  const toolbarSuppressed = useToolbarSuppressed(view, state?.selection);
+  const hasFocus = useViewFocused(view);
   const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
   const [panelHeight, setPanelHeight] = useState(FALLBACK_PANEL_HEIGHT);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
@@ -160,6 +259,158 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
   useEffect(() => {
     if (keyboardInset > 0) lastKeyboardHeightRef.current = keyboardInset;
   }, [keyboardInset]);
+
+  // Computed here (not after schema/editor are confirmed non-null below)
+  // since it only needs `state`/`schema`, both already optional-chained --
+  // `effectiveMode` needs this before the early-return, and a NodeSelection
+  // on an image/video/audio/code_block counts as "text editing" the same
+  // as DOM focus does (see `textEditingActive` below), even though it alone
+  // doesn't require the editor to currently have DOM focus.
+  const mediaSelection = state?.selection instanceof NodeSelection ? state.selection : null;
+  const selectedMediaType =
+    mediaSelection && schema && [schema.nodes.image, schema.nodes.video, schema.nodes.audio, schema.nodes.code_block].includes(mediaSelection.node.type)
+      ? mediaSelection.node.type
+      : null;
+
+  // No manual Text/Draw toggle -- "something that needs text-editing UI is
+  // actually happening right now": the editor has DOM focus (typing, or a
+  // selection even without an on-screen keyboard up), a group panel is
+  // open (which deliberately blurs the view itself -- see `openGroup`
+  // below -- so `activeGroupKey` has to count on its own), or a media/
+  // code-block node is selected. Deliberately NOT gated on
+  // `toolbarSuppressed` (typing inside a code block) -- that only hides
+  // the rich formatting row (see `showRichContent` below), it doesn't mean
+  // text-editing stopped.
+  const textEditingActive = hasFocus || activeGroupKey !== null || selectedMediaType !== null;
+
+  // Mode starts in Text (opening a document should land you ready to
+  // edit, not staring at pen tools) and only becomes Draw on the FALLING
+  // EDGE of `textEditingActive` -- i.e. once you deliberately stop (hide
+  // the keyboard, close a group without reselecting, deselect a node),
+  // not merely "whatever happens to be true on any given render while
+  // nothing is currently active." A purely functional `textEditingActive
+  // ? "text" : "draw"` recomputed fresh every render made idle-on-load
+  // default to Draw too (nothing has been focused yet, which reads
+  // identically to "just finished editing") -- confirmed directly as a
+  // real, reported regression, not what's wanted. Re-entering Text mode
+  // afterward works the same either way: the "Edit text" button below (or
+  // reopening a group/selecting media) makes `textEditingActive` true
+  // again, which this effect picks up on its very next run.
+  const [derivedMode, setDerivedMode] = useState<EditorMode>("text");
+  const wasTextEditingActiveRef = useRef(false);
+  useEffect(() => {
+    if (drawDisabled) {
+      setDerivedMode("text");
+      return;
+    }
+    if (textEditingActive) {
+      setDerivedMode("text");
+    } else if (wasTextEditingActiveRef.current) {
+      setDerivedMode("draw");
+    }
+    wasTextEditingActiveRef.current = textEditingActive;
+  }, [textEditingActive, drawDisabled]);
+  const effectiveMode = derivedMode;
+
+  useEffect(() => {
+    onModeChange(effectiveMode);
+  }, [effectiveMode, onModeChange]);
+
+  // Pen style, Pin/Sketch, Paging, and the one explicit way back to Text
+  // mode -- formerly ModeHeader.tsx, a separate always-visible bar pinned
+  // above the content area, then (Phase 4) a permanently-visible row
+  // stacked above the rich toolbar. Now the single row shown while
+  // `effectiveMode === "draw"` -- see the final return below, which shows
+  // either this or the rich/default row, never both at once (one row,
+  // aligned to the design). None of this references `editor`/`commands`/
+  // `schema`, which is exactly why it's computed before the early-return
+  // below rather than after it -- it must stay reachable even when those
+  // are still null (the single-instance startup window, or the
+  // virtualized path before any chunk has received focus yet), though in
+  // practice `effectiveMode` is clamped to "text" during that exact window
+  // (via `drawDisabled`), so this specific row isn't actually reachable
+  // until then anyway.
+  const drawModeRow = (
+    <div className="toolbar-mode-row" role="group" aria-label="Draw tools">
+      <button
+        type="button"
+        className="mode-header-button"
+        title="Edit text"
+        aria-label="Edit text"
+        disabled={!view}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => view?.focus()}
+      >
+        ⌨
+      </button>
+      <span className="mode-header-separator" aria-hidden="true" />
+      <button
+        type="button"
+        className="mode-header-button"
+        title={pagingMode ? "Paged view (scroll to flip pages)" : "Continuous scroll"}
+        aria-label="Paging mode"
+        aria-pressed={pagingMode}
+        data-active={pagingMode || undefined}
+        onClick={() => onPagingModeChange(!pagingMode)}
+      >
+        📑
+      </button>
+      <span className="mode-header-separator" aria-hidden="true" />
+      <div className="toolbar-pencil-group" role="group" aria-label="Pen style">
+        {PEN_STYLES.map((style) => (
+          <button
+            key={style.id}
+            type="button"
+            className="mode-header-pen-button"
+            title={style.label}
+            aria-label={style.label}
+            aria-pressed={penStyle.id === style.id}
+            data-active={penStyle.id === style.id || undefined}
+            onClick={() => onPenStyleChange(style)}
+          >
+            <span className="mode-header-pen-swatch" style={{ background: style.color, opacity: style.opacity ?? 1 }} />
+          </button>
+        ))}
+      </div>
+      <span className="mode-header-separator" aria-hidden="true" />
+      <button
+        type="button"
+        className="mode-header-button"
+        title="Pin (moves with its paragraph, keeps its shape, saved)"
+        aria-label="Pin"
+        aria-pressed={anchorMode === "pin"}
+        data-active={anchorMode === "pin" || undefined}
+        onClick={() => onAnchorModeChange("pin")}
+      >
+        📌
+      </button>
+      <button
+        type="button"
+        className="mode-header-button"
+        title="Sketch (fixed position, not saved)"
+        aria-label="Sketch"
+        aria-pressed={anchorMode === "sketch"}
+        data-active={anchorMode === "sketch" || undefined}
+        onClick={() => onAnchorModeChange("sketch")}
+      >
+        ☁
+      </button>
+    </div>
+  );
+
+  // Rich, editor-command-dependent content (format buttons, Insert/Table/
+  // Color groups) needs a live editor/schema/commands triple -- see
+  // ToolbarProps' own doc comment for when this is null. `effectiveMode`
+  // is already clamped to "text" for this exact window (via `drawDisabled`),
+  // so `drawModeRow` is never actually reached here -- just nothing rich to
+  // show yet either.
+  if (!editor || !commands || !view || !schema || !state) {
+    return (
+      <div className="toolbar" role="toolbar" style={{ bottom: 0 }}>
+        <div className="toolbar-row" />
+      </div>
+    );
+  }
 
   const insertMermaid: Command = (_state, dispatch) => {
     if (dispatch) insertMermaidBlock(editor.ctx);
@@ -376,34 +627,40 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
   // no way to select, and therefore no way to delete, a code block at all
   // before this. codeBlockLongPress.ts's long-press gesture is what
   // produces the NodeSelection here; this file doesn't need to know how.
-  const mediaSelection = state.selection instanceof NodeSelection ? state.selection : null;
-  const selectedMediaType =
-    mediaSelection && [schema.nodes.image, schema.nodes.video, schema.nodes.audio, schema.nodes.code_block].includes(mediaSelection.node.type)
-      ? mediaSelection.node.type
-      : null;
+  // (`mediaSelection`/`selectedMediaType` themselves are computed earlier,
+  // above the early-return, since `effectiveMode` needs them too.)
 
-  const visible = !toolbarSuppressed && (keyboardInset > 0 || activeGroup !== null || selectedMediaType !== null);
-
-  function openGroup(key: string) {
+  const openGroup = (key: string) => {
     setPanelHeight(keyboardInset > 0 ? keyboardInset : lastKeyboardHeightRef.current);
     view.dom.blur();
     setActiveGroupKey(key);
-  }
+  };
 
-  function closeGroup() {
+  const closeGroup = () => {
     setActiveGroupKey(null);
     view.focus();
-  }
+  };
 
-  function deleteSelectedMedia() {
+  const deleteSelectedMedia = () => {
     view.dispatch(view.state.tr.deleteSelection());
-  }
+  };
 
-  if (!visible) return null;
+  // The rich, editor-command content (format row / group panel / media row)
+  // only ever makes sense in Text mode, and is additionally suppressed
+  // while focus is inside a code block (see useToolbarSuppressed above) --
+  // none of these commands apply to code, regardless of whether a keyboard
+  // happens to be up for it. Text mode with suppression active renders an
+  // empty row below (same placeholder the startup-window early-return
+  // uses), not `drawModeRow` -- the user is still actively editing text
+  // (code), DrawLayer must stay inactive, there's just nothing useful for
+  // THIS toolbar to show for it.
+  const showRichContent = effectiveMode === "text" && !toolbarSuppressed && (keyboardInset > 0 || activeGroup !== null || selectedMediaType !== null);
 
   return (
-    <div className="toolbar" role="toolbar" style={{ bottom: keyboardInset }}>
-      {activeGroup ? (
+    <div className="toolbar" role="toolbar" style={{ bottom: effectiveMode === "text" ? keyboardInset : 0 }}>
+      {effectiveMode === "draw" ? drawModeRow : !showRichContent ? (
+        <div className="toolbar-row" />
+      ) : (activeGroup ? (
         <div className="toolbar-group-panel" style={{ height: panelHeight }}>
           <div className="toolbar-group-panel-header">
             <span>{activeGroup.title}</span>
@@ -472,6 +729,7 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
                 {group.label}
               </button>
             ))}
+            <span className="toolbar-sep" aria-hidden="true" />
             {defaultItems.map((item) => (
               <ToolbarItemButton key={item.title} item={item} state={state} view={view} onApplied={() => view.focus()} />
             ))}
@@ -482,6 +740,21 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
               dismiss/close key of their own, and Undo is frequent enough to
               be worth never having to scroll for. */}
           <ToolbarItemButton item={{ label: "↶", title: "Undo", command: commands.undo }} state={state} view={view} onApplied={() => view.focus()} />
+          {/* Paging is relevant in both modes (decision 10, UX_PLAN.md) --
+              it governs how content scrolls, not text-editing itself --
+              so it's pinned here too, alongside its twin in drawModeRow. */}
+          <button
+            type="button"
+            className="toolbar-button"
+            title={pagingMode ? "Paged view (scroll to flip pages)" : "Continuous scroll"}
+            aria-label="Paging mode"
+            aria-pressed={pagingMode}
+            data-active={pagingMode || undefined}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onPagingModeChange(!pagingMode)}
+          >
+            📑
+          </button>
           <button
             type="button"
             className="toolbar-button toolbar-dismiss-keyboard"
@@ -493,7 +766,7 @@ export function Toolbar({ editor, commands }: ToolbarProps) {
             ⌨
           </button>
         </div>
-      )}
+      ))}
       {previewSrc && (
         <div className="media-preview-overlay" onClick={() => setPreviewSrc(null)}>
           <img src={previewSrc} alt="" className="media-preview-image" />

@@ -1,5 +1,5 @@
 import { getStroke } from "perfect-freehand";
-import type { PenStyle } from "./ModeHeader";
+import type { PenStyle } from "./drawTypes";
 
 // perfect-freehand's own documented usage pattern (it doesn't ship this as
 // part of its exported API, since consumers are expected to render the

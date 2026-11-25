@@ -18,8 +18,8 @@ export function listDocs(): Promise<DocSummary[]> {
   return backend.listDocs();
 }
 
-export function createDoc(): Promise<string> {
-  return backend.createDoc();
+export function createDoc(parentId: string | null = null): Promise<string> {
+  return backend.createDoc(parentId);
 }
 
 export function loadDoc(docId: string): Promise<LoadedDoc | null> {

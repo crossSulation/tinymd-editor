@@ -55,8 +55,8 @@ export function listDocs(): Promise<DocSummary[]> {
   return call({ type: "listDocs" });
 }
 
-export function createDoc(): Promise<string> {
-  return call({ type: "createDoc" });
+export function createDoc(parentId: string | null): Promise<string> {
+  return call({ type: "createDoc", parentId });
 }
 
 export function loadDoc(docId: string): Promise<LoadedDoc | null> {

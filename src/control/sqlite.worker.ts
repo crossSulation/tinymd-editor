@@ -5,11 +5,14 @@ import type { DocumentMeta } from "../model";
 export interface LoadedDoc {
   meta: DocumentMeta;
   blocks: string[];
+  parentId: string | null;
 }
 
 export interface DocSummary {
   id: string;
   meta: DocumentMeta;
+  /** null for a top-level (root) document. Set once at creation -- no reparenting UI exists. */
+  parentId: string | null;
 }
 
 export interface StorageInfo {
@@ -20,7 +23,7 @@ export interface StorageInfo {
 type WorkerRequest =
   | { id: number; type: "getStorageInfo" }
   | { id: number; type: "listDocs" }
-  | { id: number; type: "createDoc" }
+  | { id: number; type: "createDoc"; parentId: string | null }
   | { id: number; type: "loadDoc"; docId: string }
   | { id: number; type: "saveDoc"; docId: string; meta: DocumentMeta; blocks: string[] }
   | { id: number; type: "deleteDoc"; docId: string };
@@ -28,6 +31,23 @@ type WorkerRequest =
 type WorkerResponse =
   | { id: number; ok: true; result: unknown }
   | { id: number; ok: false; error: string };
+
+// This app's first-ever schema change -- `docs` already shipped (and is
+// real, on-disk data on real devices from earlier testing this session)
+// without `parent_id`, so a fresh `CREATE TABLE IF NOT EXISTS` alone
+// wouldn't add the column to an already-existing database (the whole
+// statement is skipped once the table exists at all). Verified directly
+// against a real SQLite engine (not assumed) that `ALTER TABLE ... ADD
+// COLUMN ... REFERENCES ... ON DELETE SET NULL` is valid here -- SQLite's
+// foreign keys are checked only on INSERT/UPDATE/DELETE, never retroactively
+// against existing rows, so backfilling a nullable FK column this way is
+// safe regardless of what's already in the table.
+function migrateParentIdColumn(db: Database) {
+  const cols = db.exec({ sql: "PRAGMA table_info(docs);", rowMode: "object", returnValue: "resultRows" }) as unknown as { name: string }[];
+  if (!cols.some((c) => c.name === "parent_id")) {
+    db.exec("ALTER TABLE docs ADD COLUMN parent_id TEXT REFERENCES docs(id) ON DELETE SET NULL;");
+  }
+}
 
 let dbPromise: Promise<{ db: Database; persistent: boolean }> | null = null;
 
@@ -48,7 +68,8 @@ function openDb() {
           tags TEXT NOT NULL DEFAULT '[]',
           custom_properties TEXT NOT NULL DEFAULT '[]',
           created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+          updated_at TEXT NOT NULL,
+          parent_id TEXT REFERENCES docs(id) ON DELETE SET NULL
         );
         CREATE TABLE IF NOT EXISTS blocks (
           doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
@@ -57,6 +78,7 @@ function openDb() {
           PRIMARY KEY (doc_id, position)
         );
       `);
+      migrateParentIdColumn(db);
 
       if (!persistent) {
         console.warn(
@@ -96,17 +118,17 @@ async function listDocs(): Promise<DocSummary[]> {
     returnValue: "resultRows",
   }) as unknown as Record<string, unknown>[];
 
-  return rows.map((row) => ({ id: row.id as string, meta: rowToMeta(row) }));
+  return rows.map((row) => ({ id: row.id as string, meta: rowToMeta(row), parentId: (row.parent_id as string | null) ?? null }));
 }
 
-async function createDoc(): Promise<string> {
+async function createDoc(parentId: string | null): Promise<string> {
   const { db } = await openDb();
   const docId = crypto.randomUUID();
   const now = new Date().toISOString();
 
   db.exec({
-    sql: "INSERT INTO docs (id, title, author, tags, custom_properties, created_at, updated_at) VALUES (?, '', '', '[]', '[]', ?, ?);",
-    bind: [docId, now, now],
+    sql: "INSERT INTO docs (id, title, author, tags, custom_properties, created_at, updated_at, parent_id) VALUES (?, '', '', '[]', '[]', ?, ?, ?);",
+    bind: [docId, now, now, parentId],
   });
 
   return docId;
@@ -130,7 +152,11 @@ async function loadDoc(docId: string): Promise<LoadedDoc | null> {
     returnValue: "resultRows",
   }) as unknown as { content: string }[];
 
-  return { meta: rowToMeta(docRows[0]!), blocks: blockRows.map((r) => r.content) };
+  return {
+    meta: rowToMeta(docRows[0]!),
+    blocks: blockRows.map((r) => r.content),
+    parentId: (docRows[0]!.parent_id as string | null) ?? null,
+  };
 }
 
 async function saveDoc(docId: string, meta: DocumentMeta, blocks: string[]): Promise<void> {
@@ -188,7 +214,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         result = await listDocs();
         break;
       case "createDoc":
-        result = await createDoc();
+        result = await createDoc(message.parentId);
         break;
       case "loadDoc":
         result = await loadDoc(message.docId);

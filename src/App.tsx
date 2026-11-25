@@ -28,7 +28,11 @@ function App() {
         </div>
       )}
       {route.type === 'editor' ? (
-        <EditorPage docId={route.docId} onBack={() => setRoute({ type: 'home' })} />
+        <EditorPage
+          docId={route.docId}
+          onBack={() => setRoute({ type: 'home' })}
+          onOpenDoc={(docId) => setRoute({ type: 'editor', docId })}
+        />
       ) : (
         <HomePage onOpenDoc={(docId) => setRoute({ type: 'editor', docId })} />
       )}

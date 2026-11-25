@@ -31,6 +31,18 @@ function enqueue<T>(run: () => Promise<T>): Promise<T> {
   return result;
 }
 
+// This app's first-ever schema change -- see sqlite.worker.ts's own
+// migrateParentIdColumn for the full reasoning (verified directly against a
+// real SQLite engine, not assumed). Mirrored here since tauriDb.ts keeps its
+// own separate CREATE TABLE statements, same precedent as every other piece
+// of schema/API shape in this file.
+async function migrateParentIdColumn(db: Database): Promise<void> {
+  const cols = await db.select<{ name: string }[]>("PRAGMA table_info(docs);");
+  if (!cols.some((c) => c.name === "parent_id")) {
+    await db.execute("ALTER TABLE docs ADD COLUMN parent_id TEXT REFERENCES docs(id) ON DELETE SET NULL;");
+  }
+}
+
 let dbPromise: Promise<Database> | null = null;
 
 function openDb(): Promise<Database> {
@@ -45,7 +57,8 @@ function openDb(): Promise<Database> {
           tags TEXT NOT NULL DEFAULT '[]',
           custom_properties TEXT NOT NULL DEFAULT '[]',
           created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+          updated_at TEXT NOT NULL,
+          parent_id TEXT REFERENCES docs(id) ON DELETE SET NULL
         );
       `);
       await db.execute(`
@@ -56,6 +69,7 @@ function openDb(): Promise<Database> {
           PRIMARY KEY (doc_id, position)
         );
       `);
+      await migrateParentIdColumn(db);
       return db;
     });
   }
@@ -85,19 +99,19 @@ export function listDocs(): Promise<DocSummary[]> {
     const rows = await db.select<Record<string, unknown>[]>(
       "SELECT * FROM docs ORDER BY updated_at DESC;",
     );
-    return rows.map((row) => ({ id: row.id as string, meta: rowToMeta(row) }));
+    return rows.map((row) => ({ id: row.id as string, meta: rowToMeta(row), parentId: (row.parent_id as string | null) ?? null }));
   });
 }
 
-export function createDoc(): Promise<string> {
+export function createDoc(parentId: string | null): Promise<string> {
   return enqueue(async () => {
     const db = await openDb();
     const docId = crypto.randomUUID();
     const now = new Date().toISOString();
 
     await db.execute(
-      "INSERT INTO docs (id, title, author, tags, custom_properties, created_at, updated_at) VALUES ($1, '', '', '[]', '[]', $2, $3);",
-      [docId, now, now],
+      "INSERT INTO docs (id, title, author, tags, custom_properties, created_at, updated_at, parent_id) VALUES ($1, '', '', '[]', '[]', $2, $3, $4);",
+      [docId, now, now, parentId],
     );
 
     return docId;
@@ -119,7 +133,11 @@ export function loadDoc(docId: string): Promise<LoadedDoc | null> {
       [docId],
     );
 
-    return { meta: rowToMeta(docRows[0]!), blocks: blockRows.map((r) => r.content) };
+    return {
+      meta: rowToMeta(docRows[0]!),
+      blocks: blockRows.map((r) => r.content),
+      parentId: (docRows[0]!.parent_id as string | null) ?? null,
+    };
   });
 }
 

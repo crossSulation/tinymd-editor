@@ -1,14 +1,137 @@
 /* Fixed bottom toolbar: always visible (never summoned, never hover-gated --
-   see editor-base.css). Holds either the default item row or a group's grid
-   panel (see Toolbar.tsx) -- never both at once. */
+   see editor-base.css). Exactly one row at a time (see Toolbar.tsx's
+   `effectiveMode` ternary) -- the draw-tools row (toolbar-mode-row below)
+   while in Draw mode, or the default item row/a group's grid panel/the
+   media-selection bar while in Text mode -- never two stacked. One
+   consolidated bottom bar, not a split top+bottom chrome (formerly
+   ModeHeader.tsx, pinned separately above the content area -- see
+   UX_PLAN.md's decision 1). There's also no manual mode toggle anymore --
+   mode is derived from whether text-editing is actually happening (see
+   Toolbar.tsx's `textEditingActive`), with a single "Edit text" button in
+   the draw-tools row as the one explicit way back into Text mode.
+
+   Colors/radii throughout this file follow the Claude Design "Insert menu"/
+   "Typing with software keyboard" artboards' own accessory-bar look
+   (#F4F5F7 bar, #DDE0E5 divider, borderless #3A3F47 icon buttons, #EAF1FE/
+   #1D4ED8 active tint) -- that full-width docked-bar shape is the same one
+   this toolbar already uses, unlike the same design's OTHER artboard
+   (Main.dc.html) showing a floating centered pill instead, which wouldn't
+   fit this app's own mobile-first horizontally-scrollable-row approach
+   (overflow on a narrow phone needs a full-width scroll track, not a
+   floating card). */
 .toolbar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 10;
-  background: #fff;
-  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  background: #f4f5f7;
+  border-top: 1px solid #dde0e5;
+}
+
+/* Draw-tools row: "Edit text" (the one way back to Text mode), Paging, pen
+   style, Pin/Sketch -- shown instead of (not alongside) the Text-mode rows
+   below, so there's no border-bottom here the way there was when this sat
+   above a second, always-present row. Icon-only, not tab-styled (no
+   underline, no text labels), same visual language as the rest of this
+   toolbar's buttons. */
+.toolbar-mode-row {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  padding: 0.5rem;
+}
+
+.mode-header-button {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: #3a3f47;
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+/* :active (press feedback), not :hover -- touch has no hover state. */
+.mode-header-button:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Driven by data-active (mode === this button's mode), not :hover. */
+.mode-header-button[data-active="true"] {
+  background: #eaf1fe;
+  color: #1d4ed8;
+}
+
+/* The Draw button's brief disabled window while the single-instance editor
+   is still initializing -- see Toolbar.tsx's own `drawDisabled` prop. */
+.mode-header-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.mode-header-button:disabled:active {
+  background: none;
+}
+
+.mode-header-separator {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.25rem 0.1rem;
+  background: #d5d9df;
+}
+
+/* Pen style / Pin / Sketch grouped into one pill (mode === "draw" only) --
+   same "Pencil tool" grouping the design's own accessory bar uses, a shade
+   darker than the bar's own background for contrast. */
+.toolbar-pencil-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  border-radius: 12px;
+  background: #e9ebee;
+}
+
+.mode-header-pen-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+}
+
+.mode-header-pen-button:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* White (not the usual light-blue tint) against the pencil group's own
+   darker pill background -- matches the design's own active-tool style
+   there exactly, a deliberate difference from this bar's other toggles. */
+.mode-header-pen-button[data-active="true"] {
+  background: #ffffff;
+}
+
+.mode-header-pen-swatch {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+
+/* A ring around the swatch itself (not the button background) so the
+   selected state stays visible regardless of how light/dark the color is --
+   same technique the design's own ink-color button uses. */
+.mode-header-pen-button[data-active="true"] .mode-header-pen-swatch {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3px #1d4ed8;
 }
 
 /* Default item row: the scrollable region (formatting/insert items) plus a
@@ -17,17 +140,27 @@
 .toolbar-row {
   display: flex;
   align-items: stretch;
-  gap: 0.25rem;
+  gap: 2px;
   padding: 0.5rem;
 }
 
 .toolbar-scroll {
   display: flex;
+  align-items: center;
   flex: 1 1 auto;
   min-width: 0;
-  gap: 0.25rem;
+  gap: 2px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.toolbar-sep {
+  flex: none;
+  width: 1px;
+  height: 24px;
+  align-self: center;
+  margin: 0 4px;
+  background: #d5d9df;
 }
 
 .toolbar-dismiss-keyboard {
@@ -44,6 +177,7 @@
   flex-direction: column;
   padding: 0.5rem;
   box-sizing: border-box;
+  background: #fff;
 }
 
 .toolbar-group-panel-header {
@@ -90,7 +224,7 @@
 .toolbar-group-row-label {
   font-size: 0.75rem;
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.5);
+  color: #5b616b;
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
@@ -105,13 +239,26 @@
   font-weight: 600;
 }
 
+/* The primary "Insert" action gets the same filled-blue accent treatment
+   the design uses for its own insert-block button -- distinct from the
+   other group triggers (Table/Text styles/Color), which stay regular
+   buttons; nothing elevates them to "primary action" the way Insert is. */
+.toolbar-group-trigger[aria-label="Insert"] {
+  background: #2563eb;
+  color: #fff;
+}
+.toolbar-group-trigger[aria-label="Insert"]:active {
+  background: #1d4ed8;
+}
+
 .toolbar-button {
   flex: none;
   min-width: 44px;
   min-height: 44px;
-  border: 1px solid rgba(0, 0, 0, 0.23);
-  border-radius: 4px;
-  background: #fff;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: #3a3f47;
   font: inherit;
   font-size: 1rem;
   cursor: pointer;
@@ -128,21 +275,23 @@
 }
 
 /* Color-swatch buttons (the "Color" group's palette -- see Toolbar.tsx's
-   swatchColor), same visual pattern as ModeHeader.tsx's pen-style swatches. */
+   swatchColor), same visual pattern as the mode row's own pen-style swatches. */
 .toolbar-swatch {
   display: inline-block;
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.toolbar-button[data-active="true"] .toolbar-swatch {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3px #1d4ed8;
 }
 
 /* Driven by selection-state polling (see Toolbar.tsx's isActive checks), not
    :hover -- shows when the cursor/selection is already inside that mark/node. */
 .toolbar-button[data-active="true"] {
-  background: rgba(25, 118, 210, 0.12);
-  border-color: #1976d2;
-  color: #1976d2;
+  background: #eaf1fe;
+  color: #1d4ed8;
 }
 
 /* Contextual bar shown when an image/video/audio node is selected (see
