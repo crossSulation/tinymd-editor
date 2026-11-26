@@ -689,7 +689,7 @@ export function Toolbar({
   return (
     <div className="toolbar" role="toolbar" data-mode={effectiveMode} style={{ bottom: effectiveMode === "text" ? keyboardInset : 0 }}>
       {effectiveMode === "draw" ? drawModeRow : !showRichContent ? (
-        <div className="toolbar-row" />
+        <div className="toolbar-row" style={{display: "none"}}/>
       ) : (activeGroup ? (
         <div className="toolbar-group-panel" style={{ height: panelHeight }}>
           <div className="toolbar-group-panel-header">
