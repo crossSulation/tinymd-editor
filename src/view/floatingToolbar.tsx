@@ -22,7 +22,7 @@ export interface FloatingToolbarProps {
 // so there's no actual reason to withhold this from desktop testing too
 // (the same reasoning Phase 2's slash menu already used for its own gate;
 // UX_PLAN.md's own decision-2 prose says "isTauri()" but that doesn't
-// match what HomePage.tsx's exportAvailable -- the precedent it cites --
+// match what Sidebar.tsx's exportAvailable -- the precedent it cites --
 // actually computes, which IS isTauriAndroid()).
 export function FloatingToolbar({ editor, commands }: FloatingToolbarProps) {
   const view = editor.ctx.get(editorViewCtx);

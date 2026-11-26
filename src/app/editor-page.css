@@ -1,10 +1,9 @@
+/* No border/card framing any more -- this is now the persistent main pane
+   beside the sidebar (UX_PLAN.md Phase 10), not a standalone page. */
 .app-editor {
   box-sizing: border-box;
   width: 100%;
-  margin: 0 auto;
-  padding: 1rem 1.5rem;
-  border: 1px solid #d0d7de;
-  border-radius: 6px;
+  padding: 0.75rem 1.5rem 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -27,19 +26,58 @@
   gap: 0.35rem;
 }
 
-.back-button {
+.sidebar-toggle {
   flex: none;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
-  color: #1976d2;
-  font: inherit;
-  font-size: 0.85rem;
+  color: #3a3f47;
+  border-radius: 8px;
   cursor: pointer;
-  padding: 0.25rem 0;
 }
 
-.back-button:hover {
-  text-decoration: underline;
+.sidebar-toggle:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Same stroke-icon values as sidebar.css's own `.ic` (the design's icon
+   style) -- kept local here rather than shared, since this file owns its
+   own small icon set (hamburger/synced/search/more-options). */
+.header-icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Landscape (default): only the "re-expand the persistent sidebar" button
+   shows. Portrait: only the "open the off-canvas drawer" one does -- same
+   `max-aspect-ratio` breakpoint as sidebar.css, no JS-side orientation
+   check needed (see AppShell.tsx/EditorPage.tsx for why these are two
+   separate buttons/handlers rather than one). */
+.sidebar-toggle-portrait {
+  display: none;
+}
+
+@media (max-aspect-ratio: 1/1) {
+  .sidebar-toggle-landscape {
+    display: none;
+  }
+
+  .sidebar-toggle-portrait {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .editor-breadcrumb-segment {
@@ -73,7 +111,7 @@
   text-decoration: underline;
 }
 
-/* Read-only -- title/author/tags are set once at creation (HomePage's
+/* Read-only -- title/author/tags are set once at creation (AppShell's
    NewDocumentModal) and aren't editable from this page (see Claude.md). */
 .editor-page-title {
   flex: 1 1 auto;
@@ -83,6 +121,91 @@
   white-space: nowrap;
   color: rgba(0, 0, 0, 0.6);
   font-size: 0.95rem;
+}
+
+/* Main.dc.html's header chrome -- cosmetic-only (see EditorPage.tsx's own
+   comment), so none of these need an interactive/pressed state. */
+.editor-status-pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f4f5f7;
+  font-size: 12px;
+  color: #3a3f47;
+  white-space: nowrap;
+}
+
+.editor-status-pill .header-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.editor-synced-pill {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #2f6b3f;
+  font-size: 0.8rem;
+}
+
+.editor-synced-pill .header-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.header-icon-button {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #3a3f47;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.header-icon-button:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.editor-share-button {
+  flex: none;
+  height: 2.25rem;
+  padding: 0 1rem;
+  border: 1px solid #e3e5e8;
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1c1f24;
+  cursor: pointer;
+}
+
+.editor-share-button:active {
+  background: #f4f5f7;
+}
+
+/* PortraitDrawer.dc.html's own header drops the Synced pill and Search
+   button entirely (Share + More options are all that's left room for next
+   to the hamburger) rather than letting them wrap/scroll -- same
+   `max-aspect-ratio` breakpoint used throughout this app. */
+@media (max-aspect-ratio: 1/1) {
+  .editor-status-pill,
+  .editor-synced-pill,
+  .header-search-button {
+    display: none;
+  }
 }
 
 .editor-surface {
