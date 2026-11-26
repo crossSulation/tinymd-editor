@@ -427,7 +427,7 @@ export function Toolbar({
   if (!editor || !commands || !view || !schema || !state) {
     return (
       <div className="toolbar" role="toolbar" data-mode={effectiveMode} style={{ bottom: 0 }}>
-        <div className="toolbar-row" />
+        <div className="toolbar-row" style={{display: "none"}}/>
       </div>
     );
   }
