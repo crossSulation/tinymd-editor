@@ -64,7 +64,22 @@ export function createCodeBlockLongPressPlugin() {
           function onPointerDown(event: PointerEvent) {
             if (!editorView.editable) return;
             const target = event.target;
-            const codeBlockEl = target instanceof HTMLElement ? target.closest<HTMLElement>(".milkdown-code-block") : null;
+            // `target instanceof Element`, not `HTMLElement` -- a real,
+            // confirmed gap found once Mermaid/LaTeX blocks became
+            // preview-only (see code-block-layout.css): their content is
+            // now almost entirely SVG (Mermaid) or KaTeX's own MathML/HTML
+            // mix, and `event.target` for a press landing on the rendered
+            // diagram/equation itself is an SVGElement -- which does NOT
+            // satisfy `instanceof HTMLElement` (SVG elements are a
+            // completely separate DOM interface branch), even though
+            // `.closest()` works identically on any Element regardless.
+            // Confirmed directly via CDP: `document.elementFromPoint()` at
+            // the center of a rendered diagram returned an `<svg>` element
+            // with `isHTMLElement: false`, silently no-opping every
+            // long-press that landed anywhere on the diagram/equation
+            // itself -- i.e. almost the entire block now that there's no
+            // source pane left to press on instead.
+            const codeBlockEl = target instanceof Element ? target.closest<HTMLElement>(".milkdown-code-block") : null;
             if (!codeBlockEl) return;
             startX = event.clientX;
             startY = event.clientY;
@@ -75,6 +90,39 @@ export function createCodeBlockLongPressPlugin() {
               if (pos === null) return;
               const tr = editorView.state.tr.setSelection(NodeSelection.create(editorView.state.doc, pos));
               editorView.dispatch(tr);
+              // A real, confirmed race, not a defensive habit: the NodeView's
+              // own `selectNode()` (called automatically by ProseMirror as
+              // part of the dispatch above, since the new selection targets
+              // this node) calls `this.cm.focus()` as a documented side
+              // effect. If this code block's embedded CodeMirror instance
+              // had never been focused before (e.g. it was just inserted via
+              // some OTHER authoring surface, never directly typed into --
+              // MermaidEditorModal.tsx's own insert/edit flow is exactly
+              // this), that focus() call is a genuine focus-GAIN, which
+              // triggers CodeMirror's own `forwardUpdate` listener
+              // (@milkdown/components' code-block component) -- confirmed
+              // directly via temporary instrumentation, not assumed: that
+              // listener runs whenever its CM instance `hasFocus`, compares
+              // PM's current selection against CM's own (unrelated) cursor
+              // position, finds them "out of sync" (a NodeSelection vs. a
+              // plain text cursor), and "corrects" PM's selection back to a
+              // TextSelection -- silently reverting the very NodeSelection
+              // this plugin just dispatched, within ~100-200ms, with no
+              // visible error. The SAME long-press on a code block that was
+              // already focused once before (e.g. the user had typed into
+              // it directly) never hits this: `cm.focus()` on an
+              // already-focused element is a no-op, no fresh focus event,
+              // nothing for forwardUpdate to react to. Blurring immediately
+              // after this dispatch pre-empts `selectNode()`'s own
+              // `cm.focus()` effect from taking hold long enough to trigger
+              // that listener -- confirmed via the same instrumentation that
+              // the selection then stays a NodeSelection indefinitely. Safe
+              // to do unconditionally (not just for the never-focused case):
+              // Toolbar.tsx's own mode derivation keeps `textEditingActive`
+              // true via `selectedMediaType` regardless of DOM focus once a
+              // code_block is selected, so this doesn't drop back to Draw
+              // mode or hide the contextual Delete/Edit-diagram bar.
+              (document.activeElement as HTMLElement | null)?.blur();
             }, LONG_PRESS_MS);
           }
 

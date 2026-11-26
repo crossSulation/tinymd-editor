@@ -8,18 +8,25 @@ import { buildMilkdownEditor } from "./createMilkdownEditor";
 import { createCommands, type EditorCommands } from "./commands";
 import { Toolbar } from "./Toolbar";
 import { SlashMenu } from "./SlashMenu";
+import { FloatingToolbar } from "./floatingToolbar";
 import { DrawLayer } from "./DrawLayer";
 import { PagingLayer } from "./PagingLayer";
 import { PEN_STYLES, type EditorMode, type PenStyle, type DrawAnchorMode } from "./drawTypes";
 import { VirtualizedEditorBody } from "./VirtualizedEditorBody";
 import { VirtualizedEditorController } from "./virtualizedEditorController";
 import { useKeyboardInset } from "./useKeyboardInset";
+import { MermaidEditorModal } from "./MermaidEditorModal";
+import { insertMermaidDiagram, replaceMermaidDiagram, type MermaidEditRequest } from "./mermaidPreview";
+import { CodeBlockEditorModal } from "./CodeBlockEditorModal";
+import { insertCodeBlock, replaceCodeBlock, type CodeBlockEditRequest } from "./codeBlockEdit";
 import "./toolbar.css";
 import "./code-block-layout.css";
 import "./editor-base.css";
 import "./draw-layer.css";
 import "./paging-layer.css";
 import "./slash-menu.css";
+import "./floating-toolbar.css";
+import "./mermaid-editor.css";
 
 // The "/" insert menu is a keyboard-centric affordance with no clear
 // mobile-touch equivalent -- web/desktop only (decision 3, UX_PLAN.md).
@@ -31,6 +38,14 @@ import "./slash-menu.css";
 // Computed once at module load, not per-render -- doesn't change over an
 // app session.
 const SLASH_MENU_AVAILABLE = !isTauriAndroid();
+
+// The floating selection toolbar (Bold/Italic/Code/Link) -- re-added per
+// UX_PLAN.md's decision 2, same isTauriAndroid() gate and reasoning as
+// SLASH_MENU_AVAILABLE above (see floatingToolbar.tsx's own doc comment
+// for why that's the right gate despite UX_PLAN.md's own decision-2 prose
+// literally saying "isTauri()" -- the Android-native-selection-toolbar
+// collision this is gated to avoid has no equivalent on Tauri desktop).
+const FLOATING_TOOLBAR_AVAILABLE = !isTauriAndroid();
 
 // Above this, a single ProseMirror view holding the entire document starts
 // costing real keystroke latency (every node gets its own DOM element kept
@@ -74,6 +89,19 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
   const [penStyle, setPenStyle] = useState<PenStyle>(PEN_STYLES[0]!);
   const [anchorMode, setAnchorMode] = useState<DrawAnchorMode>("pin");
   const [pagingMode, setPagingMode] = useState(false);
+  // Full-screen Mermaid authoring surface (UX_PLAN.md Phase 6) -- null
+  // means closed. Opened by Toolbar.tsx's "Mermaid diagram" insert action
+  // or its "Edit diagram" button (shown for a selected Mermaid code
+  // block), both via `onOpenMermaidEditor` below; `request.replace` tells
+  // `handleMermaidEditorDone` whether to insert a new diagram or replace
+  // an existing one at a known position.
+  const [mermaidEditRequest, setMermaidEditRequest] = useState<MermaidEditRequest | null>(null);
+  // Same pattern as mermaidEditRequest above, for every OTHER code_block
+  // (plain code in any language, and LaTeX) -- CodeBlockEditorModal.tsx is
+  // the generic counterpart to MermaidEditorModal.tsx, opened by
+  // Toolbar.tsx's "Code block"/"LaTeX block" insert items and its generic
+  // "Edit" button (any selected code_block whose language ISN'T Mermaid).
+  const [codeEditRequest, setCodeEditRequest] = useState<CodeBlockEditRequest | null>(null);
   const keyboardInset = useKeyboardInset();
   // The virtualized path's own analogue of "editor still null" below -- a
   // chunk needs to actually mount before DrawLayer can resolve/persist a
@@ -166,6 +194,62 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
     } catch {
       // Best-effort -- the next real text edit in that chunk's own save will catch up anyway.
     }
+  }
+
+  // "Done" in MermaidEditorModal.tsx -- `editor` here is already whichever
+  // instance is currently relevant (the single instance, or the
+  // virtualized path's currently-focused chunk), same as every other
+  // editor.ctx use in this component, so no special virtualized-path
+  // handling is needed beyond what already exists.
+  //
+  // **Both this and `closeMermaidEditor` below explicitly refocus the
+  // editor view afterward -- a real bug found and fixed while testing,
+  // not a defensive habit.** The modal's own CodeMirror instance takes DOM
+  // focus while open (needed to actually type into it), and nothing else
+  // ever returns focus to the main ProseMirror view once it closes.
+  // Toolbar.tsx's mode derivation treats that exactly like any other
+  // "stopped editing text" falling edge -- it silently switched to Draw
+  // mode, whose canvas then intercepted every click on content afterward,
+  // leaving the whole document looking permanently unresponsive (confirmed
+  // directly via CDP: `document.activeElement` stayed unset and typed text
+  // never landed, with `.draw-layer[data-active="true"]` present). A plain
+  // `view.focus()` after closing restores the normal pre-modal state,
+  // exactly like any other modal is expected to return focus on close.
+  function handleMermaidEditorDone(source: string) {
+    if (editor) {
+      if (mermaidEditRequest?.replace) {
+        replaceMermaidDiagram(editor.ctx, mermaidEditRequest.replace.pos, mermaidEditRequest.replace.nodeSize, source);
+      } else {
+        insertMermaidDiagram(editor.ctx, source);
+      }
+      editor.ctx.get(editorViewCtx).focus();
+    }
+    setMermaidEditRequest(null);
+  }
+
+  function closeMermaidEditor() {
+    editor?.ctx.get(editorViewCtx).focus();
+    setMermaidEditRequest(null);
+  }
+
+  // "Done" in CodeBlockEditorModal.tsx -- same shape and same reasons as
+  // handleMermaidEditorDone/closeMermaidEditor above (the explicit
+  // view.focus() calls are not optional, see that function's own comment).
+  function handleCodeEditorDone(language: string, source: string) {
+    if (editor) {
+      if (codeEditRequest?.replace) {
+        replaceCodeBlock(editor.ctx, codeEditRequest.replace.pos, codeEditRequest.replace.nodeSize, language, source);
+      } else {
+        insertCodeBlock(editor.ctx, language, source);
+      }
+      editor.ctx.get(editorViewCtx).focus();
+    }
+    setCodeEditRequest(null);
+  }
+
+  function closeCodeEditor() {
+    editor?.ctx.get(editorViewCtx).focus();
+    setCodeEditRequest(null);
   }
 
   // Single-document path: one Milkdown instance for the whole document.
@@ -298,7 +382,10 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
         />
         <PagingLayer active={pagingMode} />
       </div>
-      {mode === "text" && editor && commands && SLASH_MENU_AVAILABLE && <SlashMenu editor={editor} commands={commands} />}
+      {mode === "text" && editor && commands && SLASH_MENU_AVAILABLE && (
+        <SlashMenu editor={editor} commands={commands} onOpenMermaidEditor={setMermaidEditRequest} onOpenCodeEditor={setCodeEditRequest} />
+      )}
+      {mode === "text" && editor && commands && FLOATING_TOOLBAR_AVAILABLE && <FloatingToolbar editor={editor} commands={commands} />}
       <Toolbar
         editor={editor}
         commands={commands}
@@ -310,6 +397,8 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
         onAnchorModeChange={setAnchorMode}
         pagingMode={pagingMode}
         onPagingModeChange={setPagingMode}
+        onOpenMermaidEditor={setMermaidEditRequest}
+        onOpenCodeEditor={setCodeEditRequest}
         // Single-instance: its own brief startup window (editor still
         // null). Virtualized: the analogous window before any chunk has
         // mounted yet (see anyChunkMounted's own doc comment) -- not a
@@ -317,6 +406,21 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
         // documents once at least one chunk is live, same as it always has.
         drawDisabled={isVirtualized ? !anyChunkMounted : !editor}
       />
+      {mermaidEditRequest && (
+        <MermaidEditorModal
+          initialSource={mermaidEditRequest.initialSource}
+          onDone={handleMermaidEditorDone}
+          onClose={closeMermaidEditor}
+        />
+      )}
+      {codeEditRequest && (
+        <CodeBlockEditorModal
+          language={codeEditRequest.language}
+          initialSource={codeEditRequest.initialSource}
+          onDone={handleCodeEditorDone}
+          onClose={closeCodeEditor}
+        />
+      )}
     </div>
   );
 }

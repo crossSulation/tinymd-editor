@@ -1,0 +1,534 @@
+/* Full-screen dedicated Mermaid editor (UX_PLAN.md Phase 6) -- layout and
+   palette follow the Claude Design "Mermaid source editor"/"Mermaid editor
+   — tablet portrait" artboards closely (not pixel-for-pixel: those are
+   fixed-size tablet mockups, this is a fluid overlay -- same "fluid reflow,
+   not fixed-scale" precedent decision 9 already established elsewhere in
+   this app). Landscape: source pane fixed-width, left of a flexible
+   preview pane. Portrait (narrower than tall): source pane fixed-height,
+   stacked above the preview -- toggled via a plain media query, consistent
+   with how the rest of this app reflows rather than detecting a device
+   type. */
+.mermaid-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  font-family: Inter, system-ui, sans-serif;
+  color: #1c1f24;
+  /* Reserves room for a real on-screen keyboard (see MermaidEditorModal.tsx's
+     own useKeyboardInset() wiring) -- shrinks the whole flex-column layout
+     rather than letting the keyboard simply cover whatever's at the bottom.
+     0px whenever the keyboard isn't up, same as .editor-mount's own
+     --keyboard-inset elsewhere in this app. */
+  padding-bottom: var(--mermaid-editor-keyboard-inset, 0px);
+}
+
+.mermaid-editor-header {
+  height: 64px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px 0 10px;
+  border-bottom: 1px solid #e3e5e8;
+}
+
+.mermaid-editor-icon-button {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: #3a3f47;
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.mermaid-editor-icon-button:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.mermaid-editor-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mermaid-editor-title-main {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.mermaid-editor-title-sub {
+  font-size: 12px;
+  color: #5b616b;
+}
+
+.mermaid-editor-header-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* `<details>`/`<summary>` for the Type/Theme dropdowns -- native
+   disclosure semantics instead of hand-rolled open/close state, same
+   reasoning this app already applied to toggleList.ts's own toggle-list
+   node (no custom JS needed for the open/close behavior itself). */
+.mermaid-editor-dropdown {
+  position: relative;
+}
+
+.mermaid-editor-dropdown > summary {
+  list-style: none;
+  height: 40px;
+  padding: 0 10px 0 12px;
+  border: 1px solid #e3e5e8;
+  border-radius: 10px;
+  background: #ffffff;
+  font-size: 14px;
+  color: #2a2e34;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.mermaid-editor-dropdown > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mermaid-editor-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid #e3e5e8;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(20, 24, 31, 0.16);
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+}
+
+.mermaid-editor-dropdown-menu button {
+  height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #1c1f24;
+  text-align: left;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+/* The Type/Theme dropdowns live in the header (near the top), so opening
+   downward (the shared rule above) always has room. The Shape dropdown's
+   own trigger sits in the snippet bar at the BOTTOM of the source pane --
+   confirmed directly via screenshot, not assumed: opening downward there
+   rendered almost entirely below the viewport, clipped to a barely-visible
+   sliver. Opens upward and left-anchored instead (its button isn't near
+   the right edge the way Type/Theme's are), with its own scroll since 13
+   shapes at 40px each (520px) can still exceed the room available above a
+   button that's already near the bottom of a short portrait source pane. */
+/* CodeBlockEditorModal.tsx's own language picker -- deliberately NOT
+   .mermaid-editor-dropdown-menu (requested directly): that rule's own
+   `right: 0` anchoring is fine for the Type/Theme dropdowns, which sit
+   near this same header's right edge, but this dropdown's trigger sits
+   further left (right after the title), so anchoring from the right
+   there extended the menu LEFTWARD and covered the title text to its
+   left. Left-anchored instead (grows rightward), and a REAL fixed
+   height + scroll rather than a `max-height` safety net -- this list has
+   ~190 real CodeMirror languages, always taller than any reasonable
+   panel regardless of available space (unlike the Shape dropdown's own
+   13-item list below, where `max-height` is just a safety net). */
+.code-block-editor-language-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  box-sizing: border-box;
+  width: 220px;
+  height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid #e3e5e8;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(20, 24, 31, 0.16);
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+}
+
+.code-block-editor-language-menu button {
+  flex: none;
+  height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #1c1f24;
+  text-align: left;
+  padding: 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.code-block-editor-language-menu button[data-active="true"] {
+  background: #eaf1fe;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.mermaid-editor-shape-dropdown .mermaid-editor-dropdown-menu {
+  top: auto;
+  right: auto;
+  left: 0;
+  bottom: calc(100% + 4px);
+  max-height: min(320px, 60vh);
+  overflow-y: auto;
+}
+
+.mermaid-editor-dropdown-menu button[data-active="true"] {
+  background: #eaf1fe;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.mermaid-editor-segmented {
+  display: flex;
+  padding: 3px;
+  background: #eeeff1;
+  border-radius: 10px;
+}
+
+.mermaid-editor-segmented button {
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: #3a3f47;
+  cursor: pointer;
+}
+
+.mermaid-editor-segmented button[data-active="true"] {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  font-weight: 600;
+  color: #1c1f24;
+}
+
+.mermaid-editor-done {
+  height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mermaid-editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.mermaid-editor-pane-label {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5b616b;
+}
+
+.mermaid-editor-rendered-badge {
+  font-size: 13px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #2f6b3f;
+}
+
+.mermaid-editor-source {
+  width: 480px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #f7f8fa;
+  border-right: 1px solid #e3e5e8;
+}
+
+/* CodeBlockEditorModal.tsx's own plain-code case: no preview pane at all
+   (nothing to split the body with), so the source pane takes the FULL
+   body in both orientations instead of the fixed 480px/45vh sizing that
+   assumes a sibling preview pane exists -- overrides both the base rule
+   above and the portrait media query's own 45vh below, in both cases
+   because this is more specific (two classes beat one). */
+.mermaid-editor-overlay[data-no-preview="true"] .mermaid-editor-source {
+  width: auto;
+  height: auto;
+  flex: 1 1 auto;
+  border-right: 0;
+}
+
+.mermaid-editor-cm-host {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mermaid-editor-cm-host .cm-editor {
+  height: 100%;
+}
+
+.mermaid-editor-snippets {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid #e3e5e8;
+  background: #ffffff;
+}
+
+.mermaid-editor-chip {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #e3e5e8;
+  border-radius: 10px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: #2a2e34;
+  cursor: pointer;
+}
+
+.mermaid-editor-chip:active {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* CodeBlockEditorModal.tsx's own LaTeX quick-action row (Math.dc.html's
+   snippet bar -- requested directly: "align to design... add some quick
+   action") -- shares `.mermaid-editor-snippets`' own container styling
+   (flex-wrap row, same gap/padding/border already used for Mermaid's chips),
+   just a dedicated button look for math glyphs instead of text labels:
+   serif (closer to how LaTeX itself typography renders, "Times New Roman"
+   as the fallback rather than pulling in a new Google Font just for this
+   one row -- this app loads no web fonts at all today, see index.html,
+   and every other font-family here is already a system-font fallback
+   chain for the same reason). */
+.latex-editor-key {
+  height: 40px;
+  min-width: 44px;
+  padding: 0 10px;
+  border: 1px solid #e3e5e8;
+  border-radius: 10px;
+  background: #ffffff;
+  font-family: "Times New Roman", serif;
+  font-size: 18px;
+  color: #1c1f24;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+
+.latex-editor-key:active {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.latex-editor-frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  font-size: 14px;
+}
+
+.latex-editor-frac > span:last-child {
+  border-top: 1.5px solid currentColor;
+  padding-top: 1px;
+}
+
+/* Greek-letter/relation-symbol dropdown rows -- the glyph plus its LaTeX
+   command, same "icon + command name" pairing Math.dc.html's own
+   command-suggestion autocomplete row uses (that autocomplete itself isn't
+   built here, see latexEditorKit.ts's own doc comment, but this list reuses
+   its visual pairing). */
+.latex-editor-symbol-glyph {
+  width: 24px;
+  font-family: "Times New Roman", serif;
+  font-size: 18px;
+  text-align: center;
+  flex: none;
+}
+
+.latex-editor-symbol-command {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  color: #5b616b;
+}
+
+.latex-editor-symbol-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mermaid-editor-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  background-image: radial-gradient(#e6e8eb 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.mermaid-editor-preview-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.mermaid-editor-preview-svg-host {
+  transform-origin: center;
+}
+
+.mermaid-editor-preview-svg-host svg {
+  max-width: none;
+}
+
+.mermaid-editor-error {
+  color: #b42318;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.mermaid-editor-preview-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+.mermaid-editor-preview-status {
+  font-size: 13px;
+  color: #5b616b;
+}
+
+.mermaid-editor-zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: #ffffff;
+  border: 1px solid #e3e5e8;
+  border-radius: 12px;
+}
+
+.mermaid-editor-zoom-value {
+  width: 48px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.mermaid-editor-fit {
+  height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: #3a3f47;
+  cursor: pointer;
+}
+
+/* Portrait: source on top (fixed height), preview below (flexible) --
+   matches PortraitMermaid.dc.html's own stacked layout. The Type/Direction/
+   Theme controls move down into their own row (not enough header width for
+   them alongside the title in portrait) rather than wrapping awkwardly. */
+@media (max-aspect-ratio: 1/1) {
+  .mermaid-editor-header {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 64px;
+    padding: 10px 16px 10px 10px;
+  }
+
+  .mermaid-editor-header-controls {
+    order: 3;
+    padding-top: 8px;
+  }
+
+  .mermaid-editor-done {
+    margin-left: auto;
+    order: 2;
+  }
+
+  .mermaid-editor-body {
+    flex-direction: column;
+  }
+
+  .mermaid-editor-source {
+    width: auto;
+    height: 45vh;
+    border-right: 0;
+    border-bottom: 1px solid #e3e5e8;
+  }
+
+  /* While the on-screen keyboard is up, a fixed 45vh source pane plus
+     whatever's left for the preview doesn't leave enough room for either to
+     be usable (confirmed directly: the snippet-chip row and nearly all of
+     the preview pane sit below where a real keyboard's own height would
+     start). The preview isn't actionable WHILE typing anyway, so it's
+     hidden outright here rather than both panes being squeezed down to an
+     unreadable sliver -- source gets the entire remaining height instead,
+     the same trade-off e.g. GitHub's own mobile markdown editor makes.
+     Landscape doesn't need this: source/preview sit side-by-side there, so
+     reserving keyboard space (via .mermaid-editor-overlay's own
+     padding-bottom) shrinks both panes' shared height without either
+     needing to disappear. */
+  .mermaid-editor-overlay[data-keyboard-open="true"] .mermaid-editor-source {
+    height: auto;
+    flex: 1 1 auto;
+  }
+
+  .mermaid-editor-overlay[data-keyboard-open="true"] .mermaid-editor-preview {
+    display: none;
+  }
+}

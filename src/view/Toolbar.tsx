@@ -5,8 +5,8 @@ import type { EditorView } from "prosemirror-view";
 import type { Editor } from "@milkdown/kit/core";
 import { editorViewCtx, schemaCtx } from "@milkdown/kit/core";
 import { isMarkActive, isNodeActive, type EditorCommands } from "./commands";
-import { insertMermaidBlock } from "./mermaidPreview";
-import { insertLatexBlock } from "./latexPreview";
+import { type MermaidEditRequest } from "./mermaidPreview";
+import { type CodeBlockEditRequest } from "./codeBlockEdit";
 import { useKeyboardInset } from "./useKeyboardInset";
 import { TEXT_COLORS, isTextColorActive } from "./textColor";
 import { applyCodeWrapToAll } from "./codeBlockWrap";
@@ -151,6 +151,10 @@ export interface ToolbarProps {
   onPagingModeChange: (enabled: boolean) => void;
   /** Clears every stroke -- moved here from DrawLayer.tsx's own floating controls (requested directly), which still owns the actual clearing logic; this just triggers it. */
   onClearDrawing: () => void;
+  /** Opens MermaidEditorModal.tsx (Editor.tsx owns the actual modal/state) -- called both by the Insert group's "Mermaid diagram" item (`replace: null`, a new diagram) and by the generic "Edit" button below when the selected code_block's own language is Mermaid. */
+  onOpenMermaidEditor: (request: MermaidEditRequest) => void;
+  /** Opens CodeBlockEditorModal.tsx -- the same pattern as onOpenMermaidEditor above, for every OTHER code_block (plain code in any language, and LaTeX): the Insert group's "Code block"/"LaTeX block" items, and the generic "Edit" button when the selected block's language ISN'T Mermaid. */
+  onOpenCodeEditor: (request: CodeBlockEditRequest) => void;
 }
 
 interface ToolbarItem {
@@ -240,6 +244,8 @@ export function Toolbar({
   pagingMode,
   onPagingModeChange,
   onClearDrawing,
+  onOpenMermaidEditor,
+  onOpenCodeEditor,
 }: ToolbarProps) {
   const view = editor?.ctx.get(editorViewCtx) ?? null;
   const schema = editor?.ctx.get(schemaCtx) ?? null;
@@ -426,13 +432,23 @@ export function Toolbar({
     );
   }
 
+  // Opens a dedicated modal rather than inserting an empty block directly
+  // (UX_PLAN.md Phase 6, generalized to every code_block per a direct
+  // follow-up request) -- the modal itself calls back through Editor.tsx's
+  // `onDone` to perform the actual insert once the user has authored real
+  // content, not before.
   const insertMermaid: Command = (_state, dispatch) => {
-    if (dispatch) insertMermaidBlock(editor.ctx);
+    if (dispatch) onOpenMermaidEditor({ initialSource: "", replace: null });
+    return true;
+  };
+
+  const insertCode: Command = (_state, dispatch) => {
+    if (dispatch) onOpenCodeEditor({ language: "", initialSource: "", replace: null });
     return true;
   };
 
   const insertLatex: Command = (_state, dispatch) => {
-    if (dispatch) insertLatexBlock(editor.ctx);
+    if (dispatch) onOpenCodeEditor({ language: "LaTeX", initialSource: "", replace: null });
     return true;
   };
 
@@ -476,7 +492,7 @@ export function Toolbar({
         {
           label: "Code",
           items: [
-            { label: "{ }", title: "Code block", command: commands.setCodeBlock, isActive: (s) => isNodeActive(s, schema.nodes.code_block!) },
+            { label: "{ }", title: "Code block", command: insertCode, isActive: (s) => isNodeActive(s, schema.nodes.code_block!) },
             { label: "◇", title: "Mermaid diagram", command: insertMermaid },
             { label: "∑", title: "LaTeX block", command: insertLatex },
             { label: "Wrap", title: "Wrap long lines in code blocks", command: toggleCodeWrap, isActive: () => codeWrapEnabled },
@@ -716,6 +732,32 @@ export function Toolbar({
               👁
             </button>
           )}
+          {/* Every code_block is read-only inline now (CodeMirrorView.editable.of(false), createMilkdownEditor.ts) -- "Edit" is the
+              only way to change its content, for ANY language, not just Mermaid. Routes to MermaidEditorModal.tsx specifically for a
+              Mermaid-language block (its own diagram-type/direction/theme controls don't apply to anything else) and
+              CodeBlockEditorModal.tsx for everything else (plain code in any language, and LaTeX). */}
+          {selectedMediaType === schema.nodes.code_block &&
+            (() => {
+              const language = typeof mediaSelection!.node.attrs.language === "string" ? mediaSelection!.node.attrs.language : "";
+              const replace = { pos: mediaSelection!.from, nodeSize: mediaSelection!.node.nodeSize };
+              const initialSource = mediaSelection!.node.textContent;
+              return (
+                <button
+                  type="button"
+                  className="toolbar-button"
+                  title="Edit"
+                  aria-label="Edit"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() =>
+                    language.toLowerCase() === "mermaid"
+                      ? onOpenMermaidEditor({ initialSource, replace })
+                      : onOpenCodeEditor({ language, initialSource, replace })
+                  }
+                >
+                  ✎
+                </button>
+              );
+            })()}
           <button
             type="button"
             className="toolbar-button"

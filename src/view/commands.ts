@@ -54,7 +54,6 @@ export interface EditorCommands extends TableCommands {
   clearTextColor: Command;
   setParagraph: Command;
   setHeading: (level: number) => Command;
-  setCodeBlock: Command;
   toggleBlockquote: Command;
   toggleBulletList: Command;
   toggleOrderedList: Command;
@@ -94,7 +93,11 @@ export function createCommands(schema: Schema): EditorCommands {
 
   const setParagraph = setBlockType(schema.nodes.paragraph!);
   const setHeading = (level: number): Command => setBlockType(schema.nodes.heading!, { level });
-  const setCodeBlock = setBlockType(schema.nodes.code_block!);
+  // No setCodeBlock here anymore -- every code_block insertion now opens
+  // CodeBlockEditorModal.tsx first (Toolbar.tsx's "Code block" item calls
+  // onOpenCodeEditor directly), since code blocks are read-only inline
+  // and this command's own "convert current paragraph into an empty code
+  // block in place" semantics no longer fit that flow.
 
   const toggleBlockquote = toggleWrap(schema.nodes.blockquote!);
   const toggleBulletList = toggleList(schema.nodes.bullet_list!, schema.nodes.list_item!);
@@ -218,7 +221,6 @@ export function createCommands(schema: Schema): EditorCommands {
     clearTextColor,
     setParagraph,
     setHeading,
-    setCodeBlock,
     toggleBlockquote,
     toggleBulletList,
     toggleOrderedList,

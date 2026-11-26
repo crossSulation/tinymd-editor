@@ -1,7 +1,14 @@
 import katex from "katex";
-import type { Ctx } from "@milkdown/kit/ctx";
-import { commandsCtx } from "@milkdown/kit/core";
-import { addBlockTypeCommand, clearTextInCurrentBlockCommand, codeBlockSchema } from "@milkdown/kit/preset/commonmark";
+// KaTeX's own stylesheet -- required, not cosmetic: without it, the
+// accessibility MathML tree `renderToString` always emits alongside the
+// visible HTML rendering (`<span class="katex-mathml">`) has no CSS telling
+// it to stay visually hidden, so it rendered as a second, plain-text copy of
+// the equation directly underneath the real one. Confirmed directly via
+// screenshot -- not assumed -- while verifying CodeBlockEditorModal.tsx's
+// own LaTeX preview pane visually matched the Math.dc.html design: both this
+// inline preview AND the editor modal's live preview showed the duplicate
+// text, since neither had ever loaded this stylesheet.
+import "katex/dist/katex.min.css";
 
 // The CodeMirror feature's `renderPreview` config slot is a single value --
 // whichever feature's config runs last wins outright (no composition), so a
@@ -29,16 +36,9 @@ export function renderLatexPreview(language: string, content: string): string | 
   return `<div class="latex-eq-wrap">${html}</div>`;
 }
 
-// Mirrors insertMermaidBlock's pattern exactly (mermaidPreview.ts) -- a
-// code block pre-set to the "LaTeX" language, called directly from a
-// toolbar/slash-menu item.
-export function insertLatexBlock(ctx: Ctx): void {
-  const commands = ctx.get(commandsCtx);
-  const codeBlock = codeBlockSchema.type(ctx);
-
-  commands.call(clearTextInCurrentBlockCommand.key);
-  commands.call(addBlockTypeCommand.key, {
-    nodeType: codeBlock,
-    attrs: { language: "LaTeX" },
-  });
-}
+// No insertLatexBlock here anymore -- inserting a new LaTeX block now
+// opens CodeBlockEditorModal.tsx first (Toolbar.tsx's "LaTeX block" item
+// calls onOpenCodeEditor directly, same as "Code block"), since LaTeX
+// blocks are read-only inline now too; the modal's own "Done" calls
+// codeBlockEdit.ts's insertCodeBlock with language="LaTeX" once the user
+// has actually authored an equation.

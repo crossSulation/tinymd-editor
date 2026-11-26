@@ -6,12 +6,16 @@ import type { EditorView } from "prosemirror-view";
 import type { EditorState } from "prosemirror-state";
 import { SlashProvider } from "@milkdown/plugin-slash";
 import type { EditorCommands } from "./commands";
-import { insertMermaidBlock } from "./mermaidPreview";
-import { insertLatexBlock } from "./latexPreview";
+import { type MermaidEditRequest } from "./mermaidPreview";
+import { type CodeBlockEditRequest } from "./codeBlockEdit";
 
 export interface SlashMenuProps {
   editor: MilkdownEditor;
   commands: EditorCommands;
+  /** Opens MermaidEditorModal.tsx (Editor.tsx owns the modal/state) -- same callback Toolbar.tsx's "Mermaid diagram" insert item uses. */
+  onOpenMermaidEditor: (request: MermaidEditRequest) => void;
+  /** Opens CodeBlockEditorModal.tsx -- same callback Toolbar.tsx's "Code block"/"LaTeX block" insert items use. */
+  onOpenCodeEditor: (request: CodeBlockEditRequest) => void;
 }
 
 const TRIGGER = "/";
@@ -68,9 +72,16 @@ const ITEMS: SlashItem[] = [
   { id: "divider", label: "Divider", keywords: "divider hr rule", hint: "---", icon: "M3 12h18", group: "Basic", run: (view, _e, commands) => commands.insertHorizontalRule(view.state, view.dispatch) },
   // Rich blocks
   { id: "table", label: "Table", keywords: "table grid", hint: "|", icon: "M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 10h18M3 15h18M10 4v16", group: "Rich blocks", run: (view, editor, commands) => commands.insertTable(editor.ctx, 3, 3)(view.state, view.dispatch) },
-  { id: "code", label: "Code block", keywords: "code block", hint: "```", icon: "m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14", group: "Rich blocks", run: (view, _e, commands) => commands.setCodeBlock(view.state, view.dispatch) },
-  { id: "latex", label: "LaTeX block", keywords: "latex math equation", hint: "$$", icon: "M18 5H6l6 7-6 7h12", group: "Rich blocks", run: (_view, editor) => insertLatexBlock(editor.ctx) },
-  { id: "mermaid", label: "Mermaid diagram", keywords: "mermaid diagram chart flowchart", hint: "```", icon: "M3 3h7v5H3zM14 3h7v5h-7zM14 16h7v5h-7zM10 5.5h4M17.5 8v8", group: "Rich blocks", run: (_view, editor) => insertMermaidBlock(editor.ctx) },
+  // "code"/"latex" are special-cased by id in runItem below (open
+  // CodeBlockEditorModal.tsx instead of inserting directly, same pattern
+  // "mermaid" already uses for MermaidEditorModal.tsx) -- `run` here is
+  // never actually called, just present to satisfy SlashItem's shape.
+  { id: "code", label: "Code block", keywords: "code block", hint: "```", icon: "m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14", group: "Rich blocks", run: () => {} },
+  { id: "latex", label: "LaTeX block", keywords: "latex math equation", hint: "$$", icon: "M18 5H6l6 7-6 7h12", group: "Rich blocks", run: () => {} },
+  // Special-cased by id in runItem below (opens MermaidEditorModal.tsx
+  // instead of inserting directly, UX_PLAN.md Phase 6) -- `run` here is
+  // never actually called, just present to satisfy SlashItem's shape.
+  { id: "mermaid", label: "Mermaid diagram", keywords: "mermaid diagram chart flowchart", hint: "```", icon: "M3 3h7v5H3zM14 3h7v5h-7zM14 16h7v5h-7zM10 5.5h4M17.5 8v8", group: "Rich blocks", run: () => {} },
   { id: "image", label: "Image", keywords: "image picture photo", hint: "", icon: "M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM21 16l-5-5-8 9M9 8.5h.01", group: "Rich blocks", run: (view, _e, commands) => commands.insertImage(view.state, view.dispatch) },
 ];
 
@@ -89,7 +100,7 @@ function ItemIcon({ d }: { d: string }) {
 // existing tap-to-open Insert group, which stays the only insert path on
 // the Android build: a "/" menu is a keyboard-centric affordance with no
 // clear mobile-touch equivalent.
-export function SlashMenu({ editor, commands }: SlashMenuProps) {
+export function SlashMenu({ editor, commands, onOpenMermaidEditor, onOpenCodeEditor }: SlashMenuProps) {
   const view = editor.ctx.get(editorViewCtx);
   // SlashProvider sets `left`/`top` directly on THIS element (the portal
   // target it positions via floating-ui) -- same precedent as the code-block
@@ -162,7 +173,15 @@ export function SlashMenu({ editor, commands }: SlashMenuProps) {
   function runItem(item: SlashItem) {
     if (!query) return;
     view.dispatch(view.state.tr.delete(query.from, query.to));
-    item.run(view, editor, commands);
+    if (item.id === "mermaid") {
+      onOpenMermaidEditor({ initialSource: "", replace: null });
+    } else if (item.id === "code") {
+      onOpenCodeEditor({ language: "", initialSource: "", replace: null });
+    } else if (item.id === "latex") {
+      onOpenCodeEditor({ language: "LaTeX", initialSource: "", replace: null });
+    } else {
+      item.run(view, editor, commands);
+    }
     view.focus();
   }
 

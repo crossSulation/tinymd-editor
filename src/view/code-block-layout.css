@@ -222,13 +222,53 @@
   display: none;
 }
 
-/* The code-block component has a built-in code/preview-only toggle (the
-   "Hide"/"Edit" button next to the copy button, driven by previewOnlyMode).
-   When the code pane is hidden, let the preview take the full block width
-   instead of staying confined to its half of the grid, and shrink the tools
-   row down to just that toggle button, moved to the start and kept visible
-   (see toolbar.css / editor-base.css for why nothing in this app is
-   hover-only) so there's always a way back. */
+/* Mermaid/LaTeX blocks are now PERMANENTLY preview-only inline (requested
+   directly: "should just keep preview don't keep the source and remove
+   'hide'") -- editing exclusively happens in the dedicated modal now
+   (createMilkdownEditor.ts's CodeMirrorView.editable.of(false) plus
+   CodeBlockEditorModal.tsx/MermaidEditorModal.tsx), so the component's own
+   built-in code/preview-only toggle (the "Hide"/"Edit" button next to Copy,
+   driven by `previewOnlyMode`) has nothing left to usefully do.
+   `previewOnlyByDefault: true` (createMilkdownEditor.ts's codeBlockConfig)
+   starts every block that HAS a preview in this hidden-source state from
+   the moment it mounts; since there's no slot/config hook to omit the
+   toggle button's own JSX (same limitation documented throughout this app),
+   the entire `.tools` row is hidden here instead of just that button --
+   confirmed directly against the component's own render that nothing else
+   in it would stay visible anyway (LanguagePicker and the Copy button were
+   ALREADY hidden by this same selector, for the identical "nothing to pair
+   them with" reason, before this rule existed). This selector only ever
+   matches a block that has a preview: `.codemirror-host` only gets the
+   `.hidden` class when `preview.value && previewOnlyMode.value` are BOTH
+   true (confirmed directly against the component's own class computation),
+   and a plain code block's `preview.value` is always null -- so plain code
+   blocks are completely unaffected, keep their language picker + Copy
+   button, and were never showing a toggle button to begin with (preview.value
+   gates that element's existence too). The one case this selector does NOT
+   match -- content empty enough that `renderPreview` returns `null` (see
+   latexPreview.ts) -- falls back to the two-column source+preview grid
+   above rather than a blank full-width pane, same as it always has. */
+/* A real, pre-existing gap found while verifying this, not introduced by
+   it: `.hidden` (the class name the component itself applies to
+   `.codemirror-host` when `previewOnlyMode` is on) was never actually
+   given a `display: none` rule anywhere in this app's own CSS -- only the
+   grid rearrangement below existed. Since `.codemirror-host` still had an
+   explicit `grid-area: code` from the two-column rule above, and the new
+   single-column `grid-template-areas` here no longer defines a "code"
+   area, the element fell back to being auto-placed into a new IMPLICIT
+   grid column instead of actually disappearing -- confirmed directly via
+   screenshot: the raw, un-rendered source text was still visibly peeking
+   through in the block's corner even with the "Hide"/toggle-button-driven
+   state active. This was already a real bug in the ORIGINAL toggle-based
+   design (clicking "Hide" never truly hid the source, just visually
+   shrank it), it just didn't matter as much while the toggle was still a
+   two-way, user-reversible control; now that preview-only is the
+   PERMANENT state for any block with a preview, a `display: none` here
+   is the one actually-correct fix. */
+.milkdown .milkdown-code-block .codemirror-host.hidden {
+  display: none;
+}
+
 .milkdown .milkdown-code-block:has(.codemirror-host.hidden) {
   grid-template-columns: 1fr;
   grid-template-areas: "tools" "preview";
@@ -240,18 +280,5 @@
 }
 
 .milkdown .milkdown-code-block:has(.codemirror-host.hidden) .tools {
-  justify-content: flex-start;
-}
-
-.milkdown .milkdown-code-block:has(.codemirror-host.hidden) .language-button {
   display: none;
-}
-
-.milkdown .milkdown-code-block:has(.codemirror-host.hidden) .copy-button {
-  display: none;
-}
-
-.milkdown .milkdown-code-block:has(.codemirror-host.hidden) .tools-button-group button {
-  opacity: 1 !important;
-  border-radius: 100px !important;
 }

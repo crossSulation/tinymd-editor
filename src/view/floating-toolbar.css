@@ -1,0 +1,56 @@
+/* Selection-driven mini toolbar (Bold/Italic/Code/Link) -- web/desktop only
+   (see floatingToolbar.tsx's own doc comment for why). TooltipProvider sets
+   left/top directly on THIS element (.floating-toolbar-root, the one the
+   provider was constructed with) via floating-ui -- position: fixed has to
+   live here, not on .floating-toolbar-panel, same "floating-ui repositions
+   the outer element, not whatever's inside it" precedent as slash-menu.css's
+   own .slash-menu-root. data-show is the library's own attribute, toggled as
+   it shows/hides (same mechanism slash-menu.css relies on). */
+.floating-toolbar-root {
+  position: fixed;
+  z-index: 30;
+}
+
+.floating-toolbar-root[data-show="false"] {
+  display: none;
+}
+
+/* Compact, not the usual >=44px touch target this app's other UI commits to
+   (see CLAUDE.md's mobile-first rule) -- deliberately: this toolbar never
+   renders on the touch-first Android build at all (gated out entirely), so
+   there's no touch target to size for here, only a mouse/trackpad pointer.
+   Still no :hover-only affordance, though (:active only) -- matches
+   slash-menu.css's own identical choice despite being equally web-only;
+   CLAUDE.md's "no :hover-only UI in src/view/" rule is treated as an
+   absolute in this codebase, not one carved out per-feature. */
+.floating-toolbar-panel {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0.25rem;
+  background: #fff;
+  border: 1px solid #dde0e5;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.floating-toolbar-button {
+  min-width: 32px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #3a3f47;
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.floating-toolbar-button:active {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.floating-toolbar-button[data-active="true"] {
+  background: #eaf1fe;
+  color: #1d4ed8;
+}

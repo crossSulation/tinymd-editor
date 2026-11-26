@@ -11,7 +11,7 @@ import { codeBlockComponent, codeBlockConfig } from "@milkdown/kit/component/cod
 import type { DocCacheEntry } from "milkdown-chunk-editor";
 import { languages } from "@codemirror/language-data";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
-import { keymap } from "@codemirror/view";
+import { keymap, EditorView as CodeMirrorView } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { mermaidLanguage, renderMermaidPreview } from "./mermaidPreview";
 import { renderLatexPreview } from "./latexPreview";
@@ -114,11 +114,50 @@ export function buildMilkdownEditor(opts: BuildMilkdownEditorOptions): MilkdownE
       ctx.update(codeBlockConfig.key, (prev) => ({
         ...prev,
         languages: [...languages, mermaidLanguage],
-        extensions: [keymap.of(defaultKeymap.concat(indentWithTab)), basicSetup, createCodeBlockExitKeymap(ctx), codeWrapCompartment.of(wrapExtension(false))],
+        // CodeMirrorView.editable.of(false), not a Compartment -- unlike
+        // Wrap (a real, user-toggleable setting), this is permanent: ALL
+        // code/LaTeX/Mermaid editing now happens exclusively in a dedicated
+        // modal (CodeBlockEditorModal.tsx/MermaidEditorModal.tsx), requested
+        // directly, so the inline instance every code block still mounts
+        // (via @milkdown/components' own codeBlockComponent, unchanged --
+        // there's still no slot/config hook to swap in a different NodeView
+        // entirely, same limitation codeBlockWrap.ts's own comment already
+        // documents) is downgraded to a read-only PREVIEW: still selectable/
+        // copyable (CodeMirror's `editable: false` only blocks edits, not
+        // selection) and still syntax-highlighted via whichever real
+        // CodeMirror grammar the block's language resolves to, just never
+        // directly typeable. codeBlockLongPress.ts's existing blur-after-
+        // NodeSelection-dispatch fix (originally found via Mermaid) already
+        // applies unconditionally to every code_block regardless of
+        // language, so selecting any of them to reach "Edit" continues to
+        // work the same way without any further change there.
+        extensions: [
+          keymap.of(defaultKeymap.concat(indentWithTab)),
+          basicSetup,
+          createCodeBlockExitKeymap(ctx),
+          codeWrapCompartment.of(wrapExtension(false)),
+          CodeMirrorView.editable.of(false),
+        ],
         renderPreview: (language, content, applyPreview) => {
           const mermaid = renderMermaidPreview(language, content, applyPreview);
           return mermaid !== null ? mermaid : renderLatexPreview(language, content);
         },
+        // Requested directly: Mermaid/LaTeX blocks should show ONLY their
+        // rendered preview inline, never the raw source alongside it, and
+        // the component's own built-in "Hide"/"Edit" source toggle button
+        // should be gone entirely -- consistent with the read-only change
+        // above, since there's nothing left to edit inline either way.
+        // `previewOnlyByDefault` (confirmed directly against the
+        // component's own source, @milkdown/components/lib/code-block) is
+        // read ONCE into a Vue ref at mount (`previewOnlyMode`); the toggle
+        // button only renders at all when `preview.value` is truthy, i.e.
+        // only for languages with an actual preview (Mermaid/LaTeX) -- a
+        // plain code block never has one, so this changes nothing for it.
+        // The button itself can't be omitted from here (no slot/config hook
+        // for that, same limitation documented throughout this file/
+        // codeBlockWrap.ts) -- see code-block-layout.css's own
+        // `:has(.codemirror-host.hidden) .tools` rule for how it's hidden.
+        previewOnlyByDefault: true,
       }));
     })
     .use(commonmark)
