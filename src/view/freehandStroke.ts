@@ -88,3 +88,36 @@ export function strokeOutlineToPath2D(
   if (outline.length === 0) return null;
   return new Path2D(getSvgPathFromStroke(outline));
 }
+
+/**
+ * Cheap, uniform-width polyline through 2+ points -- NOT perfect-freehand's
+ * own tapered outline above, used only for the in-progress stroke's own
+ * LIVE preview (DrawLayer.tsx's `handlePointerMove`) to avoid recomputing
+ * `getStroke`'s full smoothing/outline geometry on every single move, a
+ * cost that scales with how many points the stroke has accumulated so far
+ * -- confirmed as one of the two real O(n)-per-move costs `SAMPLE_INTERVAL_MS`
+ * only amortizes, not eliminates (see DrawLayer.tsx's own comment). Meant
+ * to be STROKED (`ctx.lineWidth = penStyle.width`, round caps/joins), not
+ * filled -- a materially cheaper primitive than building and filling an
+ * outline polygon through the same points. The stroke's TRUE tapered shape
+ * is still rendered exactly once, the moment the gesture ends
+ * (`stopDrawing`'s own `redrawAll` call, which calls `strokeOutlineToPath2D`
+ * above with `last: true`) -- so a Pen/Marker stroke visibly "settles" into
+ * its final tapered look right as the pen lifts, a deliberate, user-
+ * confirmed tradeoff, not an oversight (Highlighter's own near-zero
+ * `thinning` makes this barely perceptible there, since it's already close
+ * to uniform-width).
+ *
+ * Returns null for fewer than 2 points -- a lone point (no movement yet)
+ * has no line to stroke; `DrawLayer.tsx` handles that case separately (a
+ * small filled dot at the pen's own width), the live-preview analogue of
+ * the identical "a single tap should still be visible" fix this file's own
+ * `strokeOutlineToPath2D` already documents for the committed case.
+ */
+export function buildLivePreviewLine(points: { x: number; y: number }[]): Path2D | null {
+  if (points.length < 2) return null;
+  const path = new Path2D();
+  path.moveTo(points[0]!.x, points[0]!.y);
+  for (let i = 1; i < points.length; i++) path.lineTo(points[i]!.x, points[i]!.y);
+  return path;
+}

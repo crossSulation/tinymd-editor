@@ -30,6 +30,7 @@ import { createTableCosmeticsPlugin } from "./tableCosmetics";
 import { calloutNodeSchema, calloutRemark } from "./callout";
 import { toggleListNodeSchema, toggleListNodeView, toggleSummaryNodeSchema, toggleBodyNodeSchema, toggleListRemark } from "./toggleList";
 import { searchPlugin } from "./searchPlugin";
+import { imagePastePlugin } from "./imagePaste";
 
 export interface BuildMilkdownEditorOptions {
   mount: HTMLElement;
@@ -215,5 +216,6 @@ export function buildMilkdownEditor(opts: BuildMilkdownEditorOptions): MilkdownE
     .use(createClickPastEndPlugin())
     .use(createCodeBlockLongPressPlugin())
     .use(createTableCosmeticsPlugin())
-    .use(searchPlugin);
+    .use(searchPlugin)
+    .use(imagePastePlugin);
 }

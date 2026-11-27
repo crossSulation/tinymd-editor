@@ -11,7 +11,7 @@ import type { EditorView } from "@milkdown/kit/prose/view";
 import { readInkData, writeInkData, INK_SYNC_META, type InkData, type InkStroke } from "./inkPersistence";
 import { CONTENT_REPLACE_META } from "./dirtyPlugin";
 import type { PenStyle, DrawAnchorMode } from "./drawTypes";
-import { strokeOutlineToPath2D } from "./freehandStroke";
+import { strokeOutlineToPath2D, buildLivePreviewLine } from "./freehandStroke";
 
 export interface DrawLayerProps {
   /** Whether draw mode is active -- owned by Editor.tsx (the mode-switch control lives in Toolbar.tsx), not this component itself. */
@@ -310,6 +310,27 @@ export function DrawLayer({
   // of it -- not as separately-composited regions the way stroking the
   // same self-overlapping path segment-by-segment would.
   const pointsRef = useRef<StrokePoint[]>([]);
+  // Canvas-space resolution of the CURRENT in-progress stroke's own points,
+  // index-aligned with (a subset of) `pointsRef.current` -- populated
+  // incrementally, one point per move, instead of re-resolving the WHOLE
+  // array through `resolveClientPoint`/`coordsAtPos` on every single move.
+  // The old `toCanvasPoints(pointsRef.current, ...)` call did exactly that:
+  // O(current stroke length) work on EVERY move, making a long stroke cost
+  // more to draw the longer it gets (confirmed as the dominant per-move
+  // cost, independent of GPU availability -- this is pure CPU-side
+  // position-resolution work). Safe to cache rather than re-resolve each
+  // point fresh every time: an already-resolved point's own anchor
+  // (`pos`/`dx`/`dy` or scroll-space coords) cannot change mid-gesture in
+  // this app's existing architecture -- DrawLayer is only active in Draw
+  // mode, which is mutually exclusive with the text focus a content edit
+  // or an on-screen-keyboard-driven resize would require, and a single-
+  // finger stroke's own `touch-action: none` already blocks the browser's
+  // native scroll gesture outright -- so `coordsAtPos` would deterministically
+  // return the IDENTICAL result for the same already-captured point no
+  // matter how many times it's re-queried within one gesture. Reset to `[]`
+  // everywhere `pointsRef.current` itself is reset (handlePointerDown/
+  // stopDrawing/discardDrawing) so a new gesture starts with a clean cache.
+  const resolvedPointsRef = useRef<{ x: number; y: number; pressure?: number }[]>([]);
   // The "baseline" layer: every COMPLETED stroke, pre-rendered, kept in
   // sync with strokesRef by redrawAll (see its own comment). An offscreen
   // canvas (never attached to the DOM) rather than the ImageData this used
@@ -1133,7 +1154,28 @@ export function DrawLayer({
     // No snapshot to capture here anymore -- the committed canvas is
     // already kept continuously in sync by redrawAll, so it's always a
     // valid baseline to blit from on the very first move of a new stroke.
-    pointsRef.current = [capturePoint(event)];
+    const firstPoint = capturePoint(event);
+    pointsRef.current = [firstPoint];
+    // Resolved here too, not just in handlePointerMove -- a real,
+    // confirmed-via-testing gap in an earlier draft of this incremental
+    // cache left the gesture's own FIRST point (captured here, at
+    // pointerdown) never resolved into resolvedPointsRef at all, since only
+    // handlePointerMove ever appended to it. That left the live preview
+    // permanently one point behind what was actually captured: its first
+    // segment (from the pointerdown location to wherever the first move
+    // landed) was silently missing until the stroke committed and
+    // "caught up" to its true, complete shape. Resolving it immediately
+    // here keeps resolvedPointsRef in lockstep with pointsRef from the very
+    // first point onward, matching what the committed stroke (which reads
+    // ALL of pointsRef via toCanvasPoints, pointerdown's point included)
+    // has always rendered.
+    const resolved = resolveClientPoint(firstPoint, getScrollTop());
+    if (resolved && canvasRef.current) {
+      const canvasRect = canvasRef.current.getBoundingClientRect();
+      resolvedPointsRef.current = [{ x: resolved.clientX - canvasRect.left, y: resolved.clientY - canvasRect.top, pressure: pressuresRef.current?.[0] }];
+    } else {
+      resolvedPointsRef.current = [];
+    }
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
@@ -1157,23 +1199,61 @@ export function DrawLayer({
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
 
-    pointsRef.current.push(capturePoint(event));
+    const newPoint = capturePoint(event);
+    pointsRef.current.push(newPoint);
     pressuresRef.current?.push(event.pressure);
     // GPU-backed blit of the committed baseline, replacing the old
     // getImageData/putImageData pair -- see committedCanvasRef's own
     // comment for why.
     blitCommittedToVisible();
 
-    const points = toCanvasPoints(pointsRef.current, getScrollTop(), canvas.getBoundingClientRect(), pressuresRef.current ?? undefined);
-    // `last: false` -- this stroke isn't finished yet (more points may
-    // still arrive), so perfect-freehand shouldn't taper/cap its end the
-    // way it will once stopDrawing's own redrawAll call passes `last: true`.
-    const path = strokeOutlineToPath2D(points, penStyle, false);
-    if (!path) return;
+    // Resolve ONLY the point just captured, not the whole stroke so far --
+    // see resolvedPointsRef's own comment for why re-resolving every
+    // earlier point on every move was pure, safe-to-cut redundant work.
+    // Matches toCanvasPoints' own "skip, don't guess" behavior for a point
+    // that fails to resolve (e.g. mid-startup-window): nothing is appended,
+    // so this move's outline is simply built from one fewer point, same as
+    // toCanvasPoints silently omitting it from its own `result` array would.
+    const resolved = resolveClientPoint(newPoint, getScrollTop());
+    if (resolved) {
+      const canvasRect = canvas.getBoundingClientRect();
+      const pressure = pressuresRef.current?.[pointsRef.current.length - 1];
+      resolvedPointsRef.current.push({ x: resolved.clientX - canvasRect.left, y: resolved.clientY - canvasRect.top, pressure });
+    }
 
-    ctx.fillStyle = penStyle.color;
+    // Cheap uniform-width LIVE PREVIEW, not perfect-freehand's own tapered
+    // outline -- see buildLivePreviewLine's own doc comment for why
+    // (recomputing getStroke's full smoothing/outline geometry here, every
+    // move, was the second confirmed O(n)-in-stroke-length per-move cost,
+    // alongside the point-resolution one resolvedPointsRef already fixed).
+    // The stroke's true tapered shape still renders exactly once, via
+    // strokeOutlineToPath2D, the instant the gesture ends -- stopDrawing's
+    // own redrawAll call folds the just-finished stroke into the committed
+    // canvas with `last: true`, so nothing extra is needed here to produce
+    // the final look; this block ONLY ever draws the in-progress preview.
+    const points = resolvedPointsRef.current;
+    if (points.length === 0) return;
     ctx.globalAlpha = penStyle.opacity ?? 1;
-    ctx.fill(path);
+    if (points.length === 1) {
+      // A single tap, no movement yet -- no line exists to stroke. A small
+      // filled dot at the pen's own width keeps this consistent with
+      // strokeOutlineToPath2D's own "a lone point should still render
+      // something visible" fix for the committed case (see that file), so
+      // the live preview doesn't silently regress it during this phase.
+      ctx.fillStyle = penStyle.color;
+      ctx.beginPath();
+      ctx.arc(points[0]!.x, points[0]!.y, penStyle.width / 2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const path = buildLivePreviewLine(points);
+      if (path) {
+        ctx.strokeStyle = penStyle.color;
+        ctx.lineWidth = penStyle.width;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke(path);
+      }
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -1200,6 +1280,7 @@ export function DrawLayer({
     }
     drawingRef.current = false;
     pointsRef.current = [];
+    resolvedPointsRef.current = [];
     rigidAnchorRef.current = null;
     pressuresRef.current = null;
   }
@@ -1216,6 +1297,7 @@ export function DrawLayer({
   function discardDrawing() {
     drawingRef.current = false;
     pointsRef.current = [];
+    resolvedPointsRef.current = [];
     rigidAnchorRef.current = null;
     pressuresRef.current = null;
     redrawAll(getScrollTop());
