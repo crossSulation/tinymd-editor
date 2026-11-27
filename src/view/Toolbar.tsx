@@ -155,6 +155,19 @@ export interface ToolbarProps {
   onOpenMermaidEditor: (request: MermaidEditRequest) => void;
   /** Opens CodeBlockEditorModal.tsx -- the same pattern as onOpenMermaidEditor above, for every OTHER code_block (plain code in any language, and LaTeX): the Insert group's "Code block"/"LaTeX block" items, and the generic "Edit" button when the selected block's language ISN'T Mermaid. */
   onOpenCodeEditor: (request: CodeBlockEditRequest) => void;
+  /**
+   * True whenever SearchBar.tsx is open (Editor.tsx's own `searchOpen`
+   * state). Forces this toolbar fully hidden regardless of `keyboardInset`
+   * or `effectiveMode` -- find/replace's own `<input>` elements aren't part
+   * of the ProseMirror view at all, but focusing any text input still
+   * brings up the same on-screen keyboard and therefore the same
+   * `visualViewport` resize `useKeyboardInset()` reacts to, which would
+   * otherwise pop this toolbar's own format/draw row up underneath the
+   * search bar for no reason -- none of its commands apply to the search
+   * input's own text. The request was specifically "only the keyboard
+   * should show," not this toolbar too.
+   */
+  searchOpen?: boolean;
 }
 
 interface ToolbarItem {
@@ -246,6 +259,7 @@ export function Toolbar({
   onClearDrawing,
   onOpenMermaidEditor,
   onOpenCodeEditor,
+  searchOpen,
 }: ToolbarProps) {
   const view = editor?.ctx.get(editorViewCtx) ?? null;
   const schema = editor?.ctx.get(schemaCtx) ?? null;
@@ -510,6 +524,7 @@ export function Toolbar({
           items: [
             { label: "ℹ", title: "Callout", command: commands.insertCallout },
             { label: "▸", title: "Toggle list", command: commands.insertToggleList },
+            { label: "☑", title: "Checklist", command: commands.insertTaskList },
           ],
         },
       ],
@@ -684,12 +699,13 @@ export function Toolbar({
   // uses), not `drawModeRow` -- the user is still actively editing text
   // (code), DrawLayer must stay inactive, there's just nothing useful for
   // THIS toolbar to show for it.
-  const showRichContent = effectiveMode === "text" && !toolbarSuppressed && (keyboardInset > 0 || activeGroup !== null || selectedMediaType !== null);
+  const showRichContent = !searchOpen && effectiveMode === "text" && !toolbarSuppressed && (keyboardInset > 0 || activeGroup !== null || selectedMediaType !== null);
+  const hiddenRow = <div className="toolbar-row" style={{ display: "none" }} />;
 
   return (
     <div className="toolbar" role="toolbar" data-mode={effectiveMode} style={{ bottom: effectiveMode === "text" ? keyboardInset : 0 }}>
-      {effectiveMode === "draw" ? drawModeRow : !showRichContent ? (
-        <div className="toolbar-row" style={{display: "none"}}/>
+      {searchOpen ? hiddenRow : effectiveMode === "draw" ? drawModeRow : !showRichContent ? (
+        hiddenRow
       ) : (activeGroup ? (
         <div className="toolbar-group-panel" style={{ height: panelHeight }}>
           <div className="toolbar-group-panel-header">

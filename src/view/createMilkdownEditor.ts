@@ -8,6 +8,7 @@ import { history } from "@milkdown/kit/plugin/history";
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { cursor } from "@milkdown/kit/plugin/cursor";
 import { codeBlockComponent, codeBlockConfig } from "@milkdown/kit/component/code-block";
+import { listItemBlockComponent } from "@milkdown/kit/component/list-item-block";
 import type { DocCacheEntry } from "milkdown-chunk-editor";
 import { languages } from "@codemirror/language-data";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
@@ -28,6 +29,7 @@ import { createDirtyPlugin } from "./dirtyPlugin";
 import { createTableCosmeticsPlugin } from "./tableCosmetics";
 import { calloutNodeSchema, calloutRemark } from "./callout";
 import { toggleListNodeSchema, toggleListNodeView, toggleSummaryNodeSchema, toggleBodyNodeSchema, toggleListRemark } from "./toggleList";
+import { searchPlugin } from "./searchPlugin";
 
 export interface BuildMilkdownEditorOptions {
   mount: HTMLElement;
@@ -167,6 +169,30 @@ export function buildMilkdownEditor(opts: BuildMilkdownEditorOptions): MilkdownE
     .use(clipboard)
     .use(cursor)
     .use(codeBlockComponent)
+    // Real, tap-to-toggle checkboxes for GFM task-list items (TODO.md item
+    // 5) -- `.use(gfm)` above already registers the task-list_item schema
+    // extension/input rule (`extendListItemSchemaForTask`/
+    // `wrapInTaskListInputRule`, confirmed directly against
+    // @milkdown/preset-gfm's own source), but renders a task item as a
+    // plain `<li data-item-type="task" data-checked="...">` with no actual
+    // checkbox element or click handling -- same "zero CSS/interaction
+    // shipped" gap `codeBlockComponent` already had before this app wrote
+    // its own chrome for it. `listItemBlockComponent` is `@milkdown/kit`'s
+    // own ready-made NodeView for list_item (bullet/ordered/task alike,
+    // confirmed directly against its source): it renders a real clickable
+    // label element whose `onPointerdown` (not `:hover`) calls
+    // `setAttr("checked", !checked)`, dispatching a real transaction --
+    // exactly the "no keyboard-only affordance" touch handling this app's
+    // own design rule requires, and not something worth re-implementing by
+    // hand against a `::before` CSS pseudo-element (confirmed elsewhere in
+    // this codebase, inkPersistence.ts's own history, that a pseudo-element
+    // has no DOM identity for event targeting). Registering this replaces
+    // EVERY list item's rendering (not just task items) with this
+    // component's own label glyph (bullet/ordered/checkbox) in place of the
+    // browser's native `<li>` marker -- see list-item-block.css for the
+    // from-scratch styling this needs, same "ships zero CSS" precedent as
+    // codeBlockComponent above.
+    .use(listItemBlockComponent)
     .use(textColorMarkSchema)
     .use(textColorRemark)
     .use(underlineMarkSchema)
@@ -188,5 +214,6 @@ export function buildMilkdownEditor(opts: BuildMilkdownEditorOptions): MilkdownE
     .use(createPlaceholderPlugin(placeholder))
     .use(createClickPastEndPlugin())
     .use(createCodeBlockLongPressPlugin())
-    .use(createTableCosmeticsPlugin());
+    .use(createTableCosmeticsPlugin())
+    .use(searchPlugin);
 }

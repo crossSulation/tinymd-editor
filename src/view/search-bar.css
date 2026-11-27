@@ -1,0 +1,121 @@
+/* Find/replace bar (TODO.md item 1), triggered from EditorPage.tsx's header
+   Search button. Unlike floating-toolbar.css's identical-looking buttons,
+   this one isn't web/desktop-only -- it's reachable from both platforms'
+   header chrome, so every tap target here is >=44px per this app's own
+   mobile-first rule, not the floating toolbar's deliberate exemption. */
+.search-bar {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  border-bottom: 1px solid #dde0e5;
+}
+
+.search-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.search-bar-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 0.6rem;
+  border: 1px solid #dde0e5;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.95rem;
+  color: #1c1f24;
+  background: #f7f7f5;
+}
+
+.search-bar-input:focus {
+  outline: 2px solid #1d4ed8;
+  outline-offset: -1px;
+}
+
+.search-bar-count {
+  flex: none;
+  min-width: 3.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  color: rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+
+.search-bar-icon-button {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: #3a3f47;
+  font: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.search-bar-icon-button:active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.search-bar-icon-button:disabled {
+  color: rgba(0, 0, 0, 0.3);
+  cursor: default;
+}
+
+.search-bar-icon-button:disabled:active {
+  background: none;
+}
+
+.search-bar-icon-button[data-active="true"] {
+  background: #eaf1fe;
+  color: #1d4ed8;
+}
+
+.search-bar-text-button {
+  flex: none;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  border: 1px solid #dde0e5;
+  border-radius: 8px;
+  background: #fff;
+  color: #1c1f24;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.search-bar-text-button:active {
+  background: #f4f5f7;
+}
+
+.search-bar-text-button:disabled {
+  color: rgba(0, 0, 0, 0.3);
+  cursor: default;
+}
+
+.search-bar-text-button:disabled:active {
+  background: #fff;
+}
+
+/* Match highlights inside the editor content itself -- plain-yellow for
+   every match, a stronger orange for whichever one is currently selected
+   (prosemirror-search's own convention: the "active" match IS simply
+   whichever one the current ProseMirror selection equals), the same
+   non-active/active color pairing most browsers' own in-page find uses. */
+.milkdown .ProseMirror-search-match {
+  background: rgba(250, 204, 21, 0.45);
+  border-radius: 2px;
+}
+
+.milkdown .ProseMirror-active-search-match {
+  background: rgba(249, 115, 22, 0.55);
+  border-radius: 2px;
+}

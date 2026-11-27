@@ -66,6 +66,10 @@ const ITEMS: SlashItem[] = [
   { id: "h3", label: "Heading 3", keywords: "heading h3", hint: "###", icon: "M4 5v14M12 5v14M4 12h8M16 8h4l-2.5 4a2.5 2.5 0 1 1-1.8 4.2", group: "Basic", run: (view, _e, commands) => commands.setHeading(3)(view.state, view.dispatch) },
   { id: "bullet", label: "Bulleted list", keywords: "bulleted list ul", hint: "-", icon: "M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01", group: "Basic", run: (view, _e, commands) => commands.toggleBulletList(view.state, view.dispatch) },
   { id: "ordered", label: "Numbered list", keywords: "numbered list ordered ol", hint: "1.", icon: "M10 6h10M10 12h10M10 18h10M4 4h1.5v4M4 8h3M4 14.5a1.5 1.5 0 0 1 3 0c0 1.5-3 2-3 3.5h3", group: "Basic", run: (view, _e, commands) => commands.toggleOrderedList(view.state, view.dispatch) },
+  // Icon/hint/label reused directly from the Claude Design "Insert menu"
+  // artboard's own "Checklist" entry (Insert.dc.html), same precedent as
+  // every other SlashItem's icon here (see this array's own top comment).
+  { id: "task", label: "Checklist", keywords: "task checklist todo checkbox", hint: "[ ]", icon: "M3 4h6v6H3zM12 7h9M3 14h6v6H3zM12 17h9", group: "Basic", run: (view, _e, commands) => commands.insertTaskList(view.state, view.dispatch) },
   { id: "toggle", label: "Toggle list", keywords: "toggle collapsible details", hint: ">", icon: "M4 7l3 3-3 3M11 10h9M11 16h9", group: "Basic", run: (view, _e, commands) => commands.insertToggleList(view.state, view.dispatch) },
   { id: "quote", label: "Quote", keywords: "blockquote quote", hint: '"', icon: "M5 6h5v6H6v3M14 6h5v6h-4v3", group: "Basic", run: (view, _e, commands) => commands.toggleBlockquote(view.state, view.dispatch) },
   { id: "callout", label: "Callout", keywords: "callout note alert", hint: "!", icon: "M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 8v5M12 16h.01", group: "Basic", run: (view, _e, commands) => commands.insertCallout(view.state, view.dispatch) },

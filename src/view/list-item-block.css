@@ -1,0 +1,113 @@
+/* @milkdown/components ships zero CSS of its own for the list-item-block
+   component (same "write it from scratch" precedent as
+   code-block-layout.css's own top comment) -- this covers bullet/ordered/
+   task list items alike, since the component's own NodeView registers
+   against the one shared `list_item` node type regardless of which kind a
+   given item is (see createMilkdownEditor.ts's own comment on why this
+   single `.use()` call changes every list item's rendering, not just
+   task items). `list-style: none` here replaces the browser's native
+   marker with the component's own rendered label glyph -- without it,
+   every item would show BOTH. */
+.milkdown .ProseMirror ul,
+.milkdown .ProseMirror ol {
+  list-style: none;
+  padding-left: 1.5rem;
+  margin: 0;
+}
+
+/* The flex row has to live on `.list-item` (the actual `<li>`), not on
+   `.milkdown-list-item-block` (the NodeView's own outer wrapper div) --
+   Vue mounts the component's `<li>` as THAT div's one and only child, and
+   `.label-wrapper`/`.children` are the `<li>`'s own two children, siblings
+   of each other. Flexing the outer div (tried first) had no visible effect
+   at all, since a flex container with exactly one child has nothing to lay
+   out side by side -- confirmed directly as a real bug (checkbox and text
+   stacked on separate lines), not a Vue/component quirk. */
+.milkdown .milkdown-list-item-block .list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+/* `.children` (not `.content-dom` itself) is `.list-item`'s own direct flex
+   child, sibling of `.label-wrapper` -- `.content-dom` is one level deeper
+   still (the real contentDOM, appended as `.children`'s own child by the
+   NodeView's `onMount`). */
+.milkdown .milkdown-list-item-block .children {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.milkdown .milkdown-list-item-block .content-dom > p:first-child {
+  margin-top: 0;
+}
+
+/* The label is the list item's ONLY marker now (native markers are
+   suppressed above) -- sized/positioned to sit on the first line of text
+   rather than vertically centered against the whole (possibly
+   multi-paragraph) item. */
+.milkdown .milkdown-list-item-block .label-wrapper {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  min-height: 1.5rem;
+  margin-top: 0.15rem;
+}
+
+.milkdown .milkdown-list-item-block .label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: rgba(0, 0, 0, 0.6);
+  user-select: none;
+}
+
+/* Bullet/ordered items: a plain, non-interactive marker glyph -- same
+   visual weight as the browser's native markers they replace, just drawn
+   by this component instead. */
+.milkdown .milkdown-list-item-block .label.bullet,
+.milkdown .milkdown-list-item-block .label.ordered {
+  cursor: text;
+}
+
+/* Task items: a real tap target (the component's own `onPointerdown`, not
+   `:hover` -- see editor-base.css's own top-of-file rule), enlarged beyond
+   the glyph's own small box so a touch doesn't have to land pixel-perfect
+   on the checkbox character itself. */
+.milkdown .milkdown-list-item-block .label.unchecked,
+.milkdown .milkdown-list-item-block .label.checked {
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 1.15rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.milkdown .milkdown-list-item-block .label.unchecked:active,
+.milkdown .milkdown-list-item-block .label.checked:active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.milkdown .milkdown-list-item-block .label.checked {
+  color: #1d4ed8;
+}
+
+/* A checked task item's own text reads as "done" -- same convention the
+   design canvas itself uses for this exact content (Insert.dc.html's
+   "Open items" checklist: a checked row is dimmed + struck through). */
+.milkdown .milkdown-list-item-block:has(.label.checked) .content-dom {
+  color: rgba(0, 0, 0, 0.45);
+  text-decoration: line-through;
+}
+
+.milkdown .milkdown-list-item-block.selected {
+  outline: 2px solid #1976d2;
+  outline-offset: 2px;
+  border-radius: 4px;
+}

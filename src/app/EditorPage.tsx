@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Editor } from "../view";
+import type { EditorHandle } from "../view";
 import { joinBlocksIntoMarkdown, splitMarkdownIntoBlocks, touch } from "../model";
 import type { DocumentMeta } from "../model";
-import { createDebouncedSave, loadDoc } from "../control";
+import { createDebouncedSave, loadDoc, saveDoc } from "../control";
 import "./editor-page.css";
 
 // Same stroke-icon style as Sidebar.tsx's own icon set (the design's `.ic`
@@ -64,6 +65,10 @@ export interface EditorPageProps {
    *  this is hidden by CSS in landscape). Deliberately a separate prop from
    *  onExpandSidebar, not one combined handler -- see AppShell.tsx. */
   onOpenDrawer: () => void;
+  /** TODO.md item 2 -- fired after a rename is saved, so AppShell.tsx can
+   *  patch its own `docs` list (and therefore Sidebar.tsx's tree) without a
+   *  full `listDocs()` round trip. */
+  onRenamed: (docId: string, title: string) => void;
 }
 
 interface BreadcrumbEntry {
@@ -95,25 +100,43 @@ async function loadBreadcrumb(parentId: string | null): Promise<BreadcrumbEntry[
 // knows nothing about docIds, SQLite, or navigation, so it can be dropped
 // into another project as-is. This page is what's specific to *this* app.
 //
-// title/author/tags are set once at creation time (AppShell's
-// NewDocumentModal) and are not editable here -- there is deliberately no
-// metadata-editing UI on this page (see Claude.md's Persistence section).
-export function EditorPage({ docId, onOpenDoc, onExpandSidebar, onOpenDrawer }: EditorPageProps) {
+// author/tags are still set once at creation time (AppShell's
+// NewDocumentModal) and have no editing UI anywhere -- only TITLE is
+// editable post-creation now (TODO.md item 2, click-to-rename below),
+// since "a typo'd title can never be fixed" was the specific, concrete gap
+// that write-once metadata left open (see Claude.md's Persistence section,
+// updated alongside this change). customProperties remains fully unused,
+// unaffected by this.
+export function EditorPage({ docId, onOpenDoc, onExpandSidebar, onOpenDrawer, onRenamed }: EditorPageProps) {
   const [meta, setMeta] = useState<DocumentMeta | null>(null);
   const [initialMarkdown, setInitialMarkdown] = useState<string | null>(null);
   const [breadcrumb, setBreadcrumb] = useState<BreadcrumbEntry[]>([]);
+  // Click-to-rename: null while showing the plain title text, a draft
+  // string (pre-filled from meta.title) while the inline `<input>` is up.
+  // Separate from `meta.title` itself so Escape can discard an in-progress
+  // edit without having touched the real, saved value at all.
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const markdownRef = useRef("");
   const saveRef = useRef<ReturnType<typeof createDebouncedSave> | null>(null);
+  // TODO.md item 1 -- find/replace lives entirely inside Editor.tsx itself;
+  // this ref is the one cross-layer call needed to open it from the header's
+  // own Search button (see Editor.tsx's EditorHandle doc comment).
+  const editorRef = useRef<EditorHandle>(null);
   // Mirrors `meta` for synchronous reads in handleContentChange -- see that
   // function's own comment for why scheduling a save can't wait on React
   // actually processing a `setMeta` update first.
   const metaRef = useRef<DocumentMeta | null>(null);
+  // Set by Escape just before it explicitly blurs the title input, so
+  // handleTitleBlur (the one place that decides commit vs. cancel) discards
+  // the draft instead of saving it -- see handleTitleKeyDown's own comment.
+  const skipRenameCommitRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     setMeta(null);
     setInitialMarkdown(null);
     setBreadcrumb([]);
+    setTitleDraft(null);
 
     void (async () => {
       const doc = await loadDoc(docId);
@@ -189,6 +212,58 @@ export function EditorPage({ docId, onOpenDoc, onExpandSidebar, onOpenDrawer }: 
     saveRef.current?.(next, splitMarkdownIntoBlocks(markdown));
   }
 
+  function startRenaming() {
+    if (!metaRef.current) return;
+    setTitleDraft(metaRef.current.title);
+  }
+
+  // Both Enter and Escape explicitly blur the input rather than just
+  // setting state directly -- `onBlur` (below) is the one place that
+  // actually decides commit vs. cancel, via `skipRenameCommitRef`. Relying
+  // on React's own unmount (switching back to rendering the plain
+  // `<button>`) to implicitly blur a focused, about-to-be-removed element
+  // was considered and rejected: whether/when a browser's native blur event
+  // reaches a React synthetic handler during that specific removal isn't a
+  // timing this needs to depend on, when an explicit `.blur()` call here is
+  // both simpler and unambiguous.
+  function handleTitleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.blur();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      skipRenameCommitRef.current = true;
+      event.currentTarget.blur();
+    }
+  }
+
+  // A deliberate, infrequent action -- saved immediately via `saveDoc`
+  // directly, not through the debounced content-save path above (that
+  // debounce exists to coalesce a rapid keystroke stream, which renaming
+  // isn't). Reuses `markdownRef.current` for the blocks argument `saveDoc`
+  // still requires, same as `handleContentChange` already does -- renaming
+  // never touches document content, so the already-current markdown is
+  // exactly what should be re-saved alongside the new title.
+  async function handleTitleBlur() {
+    if (skipRenameCommitRef.current) {
+      skipRenameCommitRef.current = false;
+      setTitleDraft(null);
+      return;
+    }
+    if (titleDraft === null || !metaRef.current) {
+      setTitleDraft(null);
+      return;
+    }
+    const title = titleDraft.trim();
+    setTitleDraft(null);
+    if (title === metaRef.current.title) return;
+    const next = touch({ ...metaRef.current, title });
+    metaRef.current = next;
+    setMeta(next);
+    await saveDoc(docId, next, splitMarkdownIntoBlocks(markdownRef.current));
+    onRenamed(docId, title);
+  }
+
   if (!meta || initialMarkdown === null) {
     return <div className="app-editor">Loading...</div>;
   }
@@ -221,19 +296,35 @@ export function EditorPage({ docId, onOpenDoc, onExpandSidebar, onOpenDrawer }: 
             </span>
           ))}
         </nav>
-        <span className="editor-page-title">{meta.title || "Untitled"}</span>
+        {titleDraft !== null ? (
+          <input
+            type="text"
+            className="editor-page-title editor-page-title-input"
+            value={titleDraft}
+            autoFocus
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onKeyDown={handleTitleKeyDown}
+            onBlur={() => void handleTitleBlur()}
+          />
+        ) : (
+          <button type="button" className="editor-page-title" onClick={startRenaming}>
+            {meta.title || "Untitled"}
+          </button>
+        )}
 
         {/* Main.dc.html's own header chrome (decision 8 / UX_PLAN.md Phase
             9): visual parity only -- no backend, no accounts, no real
-            sync/sharing/search behind any of these, per that decision's own
-            "purely inert" call. Share/Search/More options take no onClick
-            at all (a plain button with none is a genuine no-op, not a
-            disabled-looking placeholder the design doesn't show either).
-            The pencil-status pill is copied verbatim, same inert treatment
-            -- its literal text ties to decision 1's pointerType-based
-            mode-switch idea, which was explicitly NOT adopted (this app
-            keeps the explicit Draw/Text toggle instead), so it's cosmetic
-            parity with the design rather than a true status readout. */}
+            sync/sharing behind Share/"Synced"/More options, per that
+            decision's own "purely inert" call; those three still take no
+            onClick at all (a genuine no-op, not a disabled-looking
+            placeholder the design doesn't show either). Search is the one
+            exception -- wired to real find/replace (TODO.md item 1) as of
+            this phase, not cosmetic chrome anymore. The pencil-status pill
+            is copied verbatim, same inert treatment as Share/Synced -- its
+            literal text ties to decision 1's pointerType-based mode-switch
+            idea, which was explicitly NOT adopted (this app keeps the
+            explicit Draw/Text toggle instead), so it's cosmetic parity with
+            the design rather than a true status readout. */}
         <span className="editor-status-pill">
           <PencilIcon />
           Pencil draws · finger edits
@@ -242,7 +333,12 @@ export function EditorPage({ docId, onOpenDoc, onExpandSidebar, onOpenDrawer }: 
           <SyncedIcon />
           Synced
         </span>
-        <button type="button" className="header-icon-button header-search-button" aria-label="Search in page">
+        <button
+          type="button"
+          className="header-icon-button header-search-button"
+          aria-label="Search in page"
+          onClick={() => editorRef.current?.openSearch()}
+        >
           <SearchIcon />
         </button>
         <button type="button" className="editor-share-button">
@@ -252,7 +348,7 @@ export function EditorPage({ docId, onOpenDoc, onExpandSidebar, onOpenDrawer }: 
           <MoreOptionsIcon />
         </button>
       </div>
-      <Editor className="editor-surface" initialMarkdown={initialMarkdown} onChange={handleContentChange} />
+      <Editor ref={editorRef} className="editor-surface" initialMarkdown={initialMarkdown} onChange={handleContentChange} />
     </div>
   );
 }

@@ -110,6 +110,15 @@ export function AppShell() {
     setSelectedDocId((current) => (current === docId ? null : current));
   }
 
+  // TODO.md item 2 -- EditorPage.tsx already persisted the rename itself
+  // (via `saveDoc`) by the time this fires; this just patches the already-
+  // loaded `docs` list in place so Sidebar.tsx's tree reflects the new title
+  // immediately, without a full `listDocs()` round trip for a change this
+  // small and already known.
+  function handleRenamed(docId: string, title: string) {
+    setDocs((current) => current?.map((doc) => (doc.id === docId ? { ...doc, meta: { ...doc.meta, title } } : doc)) ?? current);
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -126,7 +135,13 @@ export function AppShell() {
 
       <div className="app-shell-main">
         {selectedDocId ? (
-          <EditorPage docId={selectedDocId} onOpenDoc={openDoc} onExpandSidebar={expandSidebar} onOpenDrawer={openDrawer} />
+          <EditorPage
+            docId={selectedDocId}
+            onOpenDoc={openDoc}
+            onExpandSidebar={expandSidebar}
+            onOpenDrawer={openDrawer}
+            onRenamed={handleRenamed}
+          />
         ) : (
           <div className="app-shell-empty">
             <p>{docs === null ? "Loading..." : "Select a page from the sidebar, or create a new one."}</p>

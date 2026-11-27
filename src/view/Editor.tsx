@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Editor as MilkdownEditor, schemaCtx, editorViewCtx, serializerCtx } from "@milkdown/kit/core";
 import type { Transaction } from "@milkdown/kit/prose/state";
 import { isTauriAndroid } from "./platform";
@@ -19,14 +19,17 @@ import { MermaidEditorModal } from "./MermaidEditorModal";
 import { insertMermaidDiagram, replaceMermaidDiagram, type MermaidEditRequest } from "./mermaidPreview";
 import { CodeBlockEditorModal } from "./CodeBlockEditorModal";
 import { insertCodeBlock, replaceCodeBlock, type CodeBlockEditRequest } from "./codeBlockEdit";
+import { SearchBar } from "./SearchBar";
 import "./toolbar.css";
 import "./code-block-layout.css";
+import "./list-item-block.css";
 import "./editor-base.css";
 import "./draw-layer.css";
 import "./paging-layer.css";
 import "./slash-menu.css";
 import "./floating-toolbar.css";
 import "./mermaid-editor.css";
+import "./search-bar.css";
 
 // The "/" insert menu is a keyboard-centric affordance with no clear
 // mobile-touch equivalent -- web/desktop only (decision 3, UX_PLAN.md).
@@ -68,10 +71,26 @@ export interface EditorProps {
   className?: string;
 }
 
+// The one imperative entry point this otherwise-plain-props component
+// exposes (TODO.md item 1) -- find/replace is content-editing behavior, so
+// it's built and owned entirely inside this View-layer component (SearchBar.tsx),
+// but its OWN trigger (EditorPage.tsx's header Search button) necessarily
+// lives one layer up in App, outside this component's own JSX. A ref is the
+// minimal surface for that one cross-layer call, chosen over e.g. an
+// `initialSearchOpen`/`onSearchOpenChange` controlled-prop pair since
+// opening search isn't state EditorPage itself has any reason to hold or
+// react to -- it only ever needs to ask Editor to open it.
+export interface EditorHandle {
+  openSearch: () => void;
+}
+
 // Custom mobile-first editor built directly on @milkdown/kit (no Crepe --
 // Crepe's prebuilt UI relies on several :hover-revealed affordances, which
 // have no equivalent on touch). See Claude.md for why and what's reused.
-export function Editor({ initialMarkdown = "", placeholder = "Start typing...", onChange, className }: EditorProps) {
+export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
+  { initialMarkdown = "", placeholder = "Start typing...", onChange, className },
+  ref,
+) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -102,6 +121,9 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
   // Toolbar.tsx's "Code block"/"LaTeX block" insert items and its generic
   // "Edit" button (any selected code_block whose language ISN'T Mermaid).
   const [codeEditRequest, setCodeEditRequest] = useState<CodeBlockEditRequest | null>(null);
+  // TODO.md item 1 -- find/replace, opened via the imperative handle below.
+  const [searchOpen, setSearchOpen] = useState(false);
+  useImperativeHandle(ref, () => ({ openSearch: () => setSearchOpen(true) }), []);
   const keyboardInset = useKeyboardInset();
   // The virtualized path's own analogue of "editor still null" below -- a
   // chunk needs to actually mount before DrawLayer can resolve/persist a
@@ -294,6 +316,15 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
 
   return (
     <div className={className}>
+      {/* Rendered as a sibling of `.editor-content`, not inside it -- same
+          reasoning as `.virtualized-page-nav` above: DrawLayer's canvas
+          (`.draw-layer`, absolutely positioned to cover `.editor-content`
+          exactly) would otherwise paint over this whenever Draw mode is
+          active, the same bug that bar's own doc comment already
+          documents. Gated the same way SlashMenu/FloatingToolbar already
+          are (`editor && commands`) -- nothing to search against yet
+          during either path's own brief startup window. */}
+      {searchOpen && editor && <SearchBar editor={editor} onClose={() => setSearchOpen(false)} />}
       {isVirtualized && virtualizedPage && virtualizedPage.total > 1 && (
         <div className="virtualized-page-nav" role="navigation" aria-label="Page navigation">
           <button
@@ -405,6 +436,7 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
         // permanent gate either way; drawing works normally on virtualized
         // documents once at least one chunk is live, same as it always has.
         drawDisabled={isVirtualized ? !anyChunkMounted : !editor}
+        searchOpen={searchOpen}
       />
       {mermaidEditRequest && (
         <MermaidEditorModal
@@ -423,4 +455,4 @@ export function Editor({ initialMarkdown = "", placeholder = "Start typing...", 
       )}
     </div>
   );
-}
+});

@@ -30,6 +30,7 @@
     "mermaid": "^12.2.0",
     "milkdown-chunk-editor": "file:vendor/milkdown-chunk-editor-0.1.0.tgz",
     "perfect-freehand": "^1.2.3",
+    "prosemirror-search": "^1.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "remark-gfm": "^4.0.1",

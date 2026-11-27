@@ -62,6 +62,7 @@ export interface EditorCommands extends TableCommands {
   insertHorizontalRule: Command;
   insertCallout: Command;
   insertToggleList: Command;
+  insertTaskList: Command;
   insertTable: (ctx: Ctx, rows: number, cols: number) => Command;
   insertImage: Command;
   insertVideo: Command;
@@ -128,6 +129,28 @@ export function createCommands(schema: Schema): EditorCommands {
       const body = schema.nodes.toggle_body!.create(null, bodyParagraph ?? undefined);
       const toggle = schema.nodes.toggle_list!.create(null, [summary, body]);
       dispatch(state.tr.replaceSelectionWith(toggle).scrollIntoView());
+    }
+    return true;
+  };
+
+  // TODO.md item 5 -- a tap-to-insert path for GFM task lists. GFM's own
+  // task-list_item is a `list_item` with a non-null `checked` attr (same
+  // node TYPE, not a separate schema node -- confirmed directly against
+  // @milkdown/preset-gfm's `extendListItemSchemaForTask`), reachable
+  // otherwise only by typing `[ ] `/`[x] ` inside an existing list item
+  // (`wrapInTaskListInputRule`) -- a keyboard-only affordance this app's own
+  // design rule says needs a tap equivalent. Mirrors insertCallout/
+  // insertToggleList's own "build the node directly, createAndFill for
+  // required content" pattern: a single-item bullet_list (content model
+  // `listItem+`, confirmed directly) wrapping one task-type list_item
+  // (content model `paragraph block*`, so createAndFill supplies the
+  // mandatory empty paragraph).
+  const insertTaskList: Command = (state, dispatch) => {
+    const item = schema.nodes.list_item!.createAndFill({ label: "•", listType: "bullet", spread: true, checked: false });
+    if (!item) return false;
+    if (dispatch) {
+      const list = schema.nodes.bullet_list!.create({ spread: false }, item);
+      dispatch(state.tr.replaceSelectionWith(list).scrollIntoView());
     }
     return true;
   };
@@ -229,6 +252,7 @@ export function createCommands(schema: Schema): EditorCommands {
     insertHorizontalRule,
     insertCallout,
     insertToggleList,
+    insertTaskList,
     insertTable,
     insertImage,
     insertVideo,
